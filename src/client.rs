@@ -498,6 +498,7 @@ mod test {
     use std::env;
 
     use mqtt_codec_kit::common::QualityOfService;
+    use tokio::signal;
 
     use crate::client::Client;
 
@@ -560,5 +561,7 @@ mod test {
         if err.is_some() {
             println!("{:#?}", err.unwrap());
         }
+
+        signal::ctrl_c().await.expect("ctrl c failed");
     }
 }
