@@ -1,0 +1,26 @@
+[package]
+name = "mesquitte-client"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["v4"]
+v4 = ["mqtt-codec-kit/v4", "mqtt-codec-kit/tokio-codec"]
+
+[dependencies]
+futures = { version = "0.3" }
+mqtt-codec-kit = { version = "1.0" }
+thiserror = "1.0"
+tokio = { version = "1.40", features = [
+    "macros",
+    "rt-multi-thread",
+    "io-util",
+    "sync",
+    "net",
+] }
+tokio-util = { version = "0.7", features = ["codec"] }
+log = "0.4"
+
+[dev-dependencies]
+env_logger = "0.11"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
