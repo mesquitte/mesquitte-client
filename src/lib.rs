@@ -5,10 +5,10 @@ use topic_store::OnMessageArrivedHandler;
 
 pub mod client;
 pub mod error;
-pub(crate) mod net;
+mod net;
 pub mod options;
 mod pkid;
-pub(crate) mod state;
+mod state;
 pub mod token;
 mod topic_store;
 mod topic_trie;

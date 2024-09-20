@@ -8,6 +8,7 @@ use std::{
 use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
 
 use crate::{
+    enable_future,
     error::{MqttError, TokenError},
     topic_store::OnMessageArrivedHandler,
 };
@@ -17,9 +18,9 @@ use super::{State, Tokenize};
 #[derive(Default)]
 struct InnerToken {
     error: Option<MqttError>,
-    subs: Vec<String>,
-    sub_handler: HashMap<String, OnMessageArrivedHandler>,
-    sub_result: HashMap<String, SubscribeReturnCode>,
+    topics: Vec<String>,
+    handlers: HashMap<String, OnMessageArrivedHandler>,
+    results: HashMap<String, SubscribeReturnCode>,
 
     state: State,
 }
@@ -30,80 +31,58 @@ pub struct SubscribeToken {
 }
 
 impl SubscribeToken {
-    pub(crate) fn add_subscription<S: Into<String>>(
+    pub(crate) fn add_subscriptions<S: Into<String>>(
         &mut self,
-        topic: S,
-        handler: OnMessageArrivedHandler,
+        subscriptions: Vec<(S, OnMessageArrivedHandler)>,
     ) {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
 
-        let topic: String = topic.into();
-        inner.subs.push(topic.to_owned());
-        inner.sub_handler.insert(topic.to_owned(), handler);
+        for (topic, handler) in subscriptions {
+            let topic: String = topic.into();
+            inner.topics.push(topic.to_owned());
+            inner.handlers.insert(topic.to_owned(), handler);
+        }
     }
 
     pub(crate) fn get_handler<S: Into<String>>(&self, topic: S) -> Option<OnMessageArrivedHandler> {
         let inner = self.inner.lock().unwrap();
         let inner = &*inner;
 
-        inner.sub_handler.get(&topic.into()).copied()
+        inner.handlers.get(&topic.into()).copied()
     }
 
-    pub(crate) fn set_result(&mut self, index: usize, ret: SubscribeReturnCode) -> String {
+    pub(crate) fn set_result(&mut self, index: usize, result: SubscribeReturnCode) -> String {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
 
-        let mut ret_topic = String::new();
+        let mut return_topic = String::new();
 
-        if let Some(topic) = inner.subs.get(index) {
-            if inner.subs.contains(topic) {
-                inner.sub_result.insert(topic.to_owned(), ret);
-                ret_topic = topic.to_string();
+        if let Some(topic) = inner.topics.get(index) {
+            if inner.topics.contains(topic) {
+                inner.results.insert(topic.to_owned(), result);
+                return_topic = topic.to_string();
             }
         }
-        ret_topic
+        return_topic
     }
 
-    pub fn result(&self) -> Vec<String> {
+    pub fn result(&self) -> HashMap<String, SubscribeReturnCode> {
         let inner = self.inner.lock().unwrap();
         let inner = &*inner;
 
-        let mut ret = vec![];
-
-        for t in inner.subs.clone() {
-            ret.push(t);
-        }
-        ret.to_vec()
+        inner.results.clone()
     }
 }
 
-impl Future for SubscribeToken {
-    type Output = Option<TokenError>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let mut inner = self.inner.lock().unwrap();
-        let inner = &mut *inner;
-
-        if inner.state.complete {
-            let error = inner.error.as_ref().map(|e| e.into());
-            Poll::Ready(error)
-        } else {
-            inner.state.waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
+enable_future!(SubscribeToken);
 
 impl Tokenize for SubscribeToken {
     fn set_error(&mut self, error: MqttError) {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
-        inner.error = Some(error);
 
+        inner.error = Some(error);
         inner.state.complete = true;
         if let Some(waker) = inner.state.waker.take() {
             waker.wake();

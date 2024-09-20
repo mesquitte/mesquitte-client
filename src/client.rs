@@ -64,7 +64,7 @@ impl Network {
 pub struct TcpClient {
     options: ClientOptions,
     state: Arc<State>,
-    connected: AtomicBool,
+    connected: Arc<AtomicBool>,
 }
 
 impl TcpClient {
@@ -72,8 +72,12 @@ impl TcpClient {
         Self {
             options,
             state: Arc::new(State::new()),
-            connected: AtomicBool::new(false),
+            connected: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
     }
 
     fn build_connect_packet(&self) -> ConnectPacket {
@@ -148,7 +152,9 @@ impl Client for TcpClient {
 
                                 let state = self.state.clone();
 
-                                tokio::spawn(async {
+                                let connected = self.connected.clone();
+
+                                tokio::spawn(async move {
                                     let (msg_tx, msg_rx) = mpsc::channel(8);
                                     let mut read_task = tokio::spawn(async move {
                                         read_from_server(network.frame_reader, msg_tx).await;
@@ -171,6 +177,8 @@ impl Client for TcpClient {
                                         log::error!("read_task/write_task terminated");
                                         read_task.abort();
                                     };
+
+                                    connected.store(false, Ordering::SeqCst);
                                 });
 
                                 self.connected.store(true, Ordering::SeqCst);
@@ -335,8 +343,6 @@ impl Client for TcpClient {
             return token;
         }
 
-        token.add_subscription(topic.to_owned(), callback);
-
         let topic_filter = match TopicFilter::new(topic.to_owned()) {
             Ok(tf) => tf,
             Err(_) => {
@@ -347,9 +353,7 @@ impl Client for TcpClient {
 
         let subscribes = vec![(topic_filter, qos)];
 
-        let packet = SubscribePacket::new(pkid, subscribes);
-
-        let packet = VariablePacket::new(packet);
+        let packet = VariablePacket::new(SubscribePacket::new(pkid, subscribes));
 
         log::debug!("send subscribe packet");
         if self
@@ -366,6 +370,9 @@ impl Client for TcpClient {
         {
             token.set_error(MqttError::InternalChannelError);
         }
+
+        // add subscriptions after send packet to outgoing
+        token.add_subscriptions(vec![(topic.to_owned(), callback)]);
 
         token
     }
@@ -396,10 +403,10 @@ impl Client for TcpClient {
         }
 
         let mut subscribes = vec![];
+        let mut subscriptions = vec![];
 
         for (topic, qos) in topics {
             let topic: String = topic.into();
-            token.add_subscription(topic.to_owned(), callback);
 
             let topic_filter = match TopicFilter::new(topic.to_owned()) {
                 Ok(tf) => tf,
@@ -410,11 +417,11 @@ impl Client for TcpClient {
             };
 
             subscribes.push((topic_filter, qos));
+
+            subscriptions.push((topic, callback));
         }
 
-        let packet = SubscribePacket::new(pkid, subscribes);
-
-        let packet = VariablePacket::new(packet);
+        let packet = VariablePacket::new(SubscribePacket::new(pkid, subscribes));
 
         log::debug!("send subscribe packet");
         if self
@@ -431,6 +438,9 @@ impl Client for TcpClient {
         {
             token.set_error(MqttError::InternalChannelError);
         }
+
+        // add subscriptions after send packet to outgoing
+        token.add_subscriptions(subscriptions);
 
         token
     }

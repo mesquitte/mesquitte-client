@@ -1,6 +1,6 @@
 use std::collections::{hash_map, HashMap};
 
-use crate::token::Token;
+use crate::{error::MqttError, token::Token};
 
 const PKID_MAX: u16 = 65535;
 const PKID_MIN: u16 = 1;
@@ -18,7 +18,18 @@ impl PacketIds {
         }
     }
 
-    // pub fn claim_id(&mut self, )
+    pub fn claim_id(&mut self, token: Token, id: u16) {
+        if !self.index.contains_key(&id) {
+            self.index.insert(id, token);
+        } else {
+            let old = self.index.get_mut(&id).unwrap();
+            old.flow_complete();
+            self.index.insert(id, token);
+        }
+        if id > self.last_issued_id {
+            self.last_issued_id = id;
+        }
+    }
 
     pub fn get_id(&mut self, token: Token) -> u16 {
         let mut i = self.last_issued_id;
@@ -46,5 +57,12 @@ impl PacketIds {
 
     pub fn free_id(&mut self, id: &u16) {
         self.index.remove(id);
+    }
+
+    pub fn clean_up(&mut self) {
+        for (_, token) in self.index.iter_mut() {
+            token.set_error(MqttError::ConnectionLost);
+        }
+        self.index.clear();
     }
 }

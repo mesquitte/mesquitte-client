@@ -29,7 +29,7 @@ pub async fn read_from_server<R, D>(
     R: AsyncRead + Unpin,
     D: Decoder<Item = VariablePacket, Error = VariablePacketError>,
 {
-    log::debug!("start read_from_server loop");
+    log::info!("start read loop");
     loop {
         match reader.next().await {
             None => {
@@ -49,6 +49,7 @@ pub async fn read_from_server<R, D>(
             }
         }
     }
+    log::info!("read loop exited");
 }
 
 pub async fn write_to_server<W, E>(
@@ -61,8 +62,7 @@ where
     W: AsyncWrite + Unpin,
     E: Encoder<VariablePacket, Error = io::Error>,
 {
-    // let mut take_over = true;
-    log::debug!("start write_to_server loop");
+    log::info!("start write loop");
     loop {
         tokio::select! {
             packet = msg_rx.recv() => {
@@ -131,21 +131,14 @@ where
             outgoing = outgoing_rx.recv() => {
                 match outgoing {
                     Some(outgoing) => {
-
                         let packet = outgoing.packet;
 
                         log::debug!("write outgoing packet {:?}", packet);
 
                         if let Err(err) = writer.send(packet).await {
                             let errstr = err.to_string();
-                            if let Some(token) = outgoing.token {
-                                match token {
-                                    Token::Connect(mut t) => t.set_error(MqttError::IOError(err)),
-                                    Token::Disconnect(mut t) => t.set_error(MqttError::IOError(err)),
-                                    Token::Publish(mut t) => t.set_error(MqttError::IOError(err)),
-                                    Token::Subscribe(mut t) => t.set_error(MqttError::IOError(err)),
-                                    Token::Unsubscribe(mut t) => t.set_error(MqttError::IOError(err)),
-                                };
+                            if let Some(mut token) = outgoing.token {
+                                token.set_error(MqttError::IOError(err));
                             };
                             log::error!("write outgoing to server: {}", errstr);
                             break;
@@ -171,6 +164,7 @@ where
             }
         }
     }
+    log::info!("write loop exited");
 
     Ok(())
 }
@@ -182,7 +176,7 @@ fn handle_publish(
     let (qos, pkid) = packet.qos().split();
 
     let handlers = &state
-        .subscribers
+        .topic_manager
         .match_topic(packet.topic_name().to_string());
     for handler in handlers {
         handler(packet.topic_name(), packet.payload(), qos);
@@ -203,8 +197,8 @@ fn handle_publish(
 
 fn handle_puback(pkid: u16, state: Arc<State>) {
     let mut pkids = state.pkids.lock().unwrap();
-    if let Some(Token::Publish(t)) = pkids.get_token(pkid) {
-        t.flow_complete();
+    if let Some(token) = pkids.get_token(pkid) {
+        token.flow_complete();
         pkids.free_id(&pkid);
     }
 }
@@ -221,8 +215,8 @@ fn handle_pubrel(pkid: u16) -> VariablePacket {
 
 fn handle_pubcomp(pkid: u16, state: Arc<State>) {
     let mut pkids = state.pkids.lock().unwrap();
-    if let Some(Token::Publish(t)) = pkids.get_token(pkid) {
-        t.flow_complete();
+    if let Some(token) = pkids.get_token(pkid) {
+        token.flow_complete();
         pkids.free_id(&pkid);
     }
 }
@@ -232,32 +226,32 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
 
     let pkid = packet.packet_identifier();
 
-    if let Some(Token::Subscribe(t)) = pkids.get_token(pkid) {
-        for (i, ret) in packet.subscribes().iter().enumerate() {
-            let topic = t.set_result(i, *ret);
+    if let Some(Token::Subscribe(token)) = pkids.get_token(pkid) {
+        for (i, code) in packet.subscribes().iter().enumerate() {
+            let topic = token.set_result(i, *code);
 
-            let callback = t.get_handler(topic.to_owned()).unwrap();
+            let callback = token.get_handler(topic.to_owned()).unwrap();
 
-            if *ret != SubscribeReturnCode::Failure {
-                state.subscribers.add((topic, callback));
+            if *code != SubscribeReturnCode::Failure {
+                state.topic_manager.add((topic, callback));
             }
         }
 
-        t.flow_complete();
+        token.flow_complete();
         pkids.free_id(&pkid);
     }
 }
 
 fn handle_unsuback(pkid: u16, state: Arc<State>) {
     let mut pkids = state.pkids.lock().unwrap();
-    if let Some(Token::Unsubscribe(t)) = pkids.get_token(pkid) {
-        let topics = t.topics();
+    if let Some(Token::Unsubscribe(token)) = pkids.get_token(pkid) {
+        let topics = token.topics();
 
         for topic in topics {
-            state.subscribers.remove(topic);
+            state.topic_manager.remove(topic);
         }
 
-        t.flow_complete();
+        token.flow_complete();
         pkids.free_id(&pkid);
     }
 }

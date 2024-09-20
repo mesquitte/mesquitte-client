@@ -6,7 +6,10 @@ use std::{
 
 use mqtt_codec_kit::v4::control::ConnectReturnCode;
 
-use crate::error::{MqttError, TokenError};
+use crate::{
+    enable_future,
+    error::{MqttError, TokenError},
+};
 
 use super::{State, Tokenize};
 
@@ -64,25 +67,7 @@ impl ConnectToken {
     }
 }
 
-impl Future for ConnectToken {
-    type Output = Option<TokenError>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let mut inner = self.inner.lock().unwrap();
-        let inner = &mut *inner;
-
-        if inner.state.complete {
-            let error = inner.error.as_ref().map(|e| e.into());
-            Poll::Ready(error)
-        } else {
-            inner.state.waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
+enable_future!(ConnectToken);
 
 impl Tokenize for ConnectToken {
     fn set_error(&mut self, error: MqttError) {
@@ -90,7 +75,6 @@ impl Tokenize for ConnectToken {
         let inner = &mut *inner;
 
         inner.error = Some(error);
-
         inner.state.complete = true;
         if let Some(waker) = inner.state.waker.take() {
             waker.wake();

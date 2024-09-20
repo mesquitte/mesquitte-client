@@ -4,7 +4,10 @@ use std::{
     task::Poll,
 };
 
-use crate::error::{MqttError, TokenError};
+use crate::{
+    enable_future,
+    error::{MqttError, TokenError},
+};
 
 use super::{State, Tokenize};
 
@@ -20,25 +23,7 @@ pub struct DisconnectToken {
     inner: Arc<Mutex<InnerToken>>,
 }
 
-impl Future for DisconnectToken {
-    type Output = Option<TokenError>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let mut inner = self.inner.lock().unwrap();
-        let inner = &mut *inner;
-
-        if inner.state.complete {
-            let error = inner.error.as_ref().map(|e| e.into());
-            Poll::Ready(error)
-        } else {
-            inner.state.waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
+enable_future!(DisconnectToken);
 
 impl Tokenize for DisconnectToken {
     fn set_error(&mut self, error: MqttError) {

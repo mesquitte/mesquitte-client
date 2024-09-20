@@ -1,5 +1,5 @@
 #[derive(Debug, thiserror::Error)]
-pub enum MqttError {
+pub(crate) enum MqttError {
     #[error(transparent)]
     IOError(#[from] std::io::Error),
     #[error("Network Unreachable")]
