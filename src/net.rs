@@ -1,6 +1,5 @@
-use std::{io, sync::Arc};
-
 use futures::{SinkExt, StreamExt};
+use std::{io, sync::Arc};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -196,7 +195,7 @@ fn handle_publish(
 }
 
 fn handle_puback(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock().unwrap();
+    let mut pkids = state.pkids.lock();
     if let Some(token) = pkids.get_token(pkid) {
         token.flow_complete();
         pkids.free_id(&pkid);
@@ -214,7 +213,7 @@ fn handle_pubrel(pkid: u16) -> VariablePacket {
 }
 
 fn handle_pubcomp(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock().unwrap();
+    let mut pkids = state.pkids.lock();
     if let Some(token) = pkids.get_token(pkid) {
         token.flow_complete();
         pkids.free_id(&pkid);
@@ -222,7 +221,7 @@ fn handle_pubcomp(pkid: u16, state: Arc<State>) {
 }
 
 fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
-    let mut pkids = state.pkids.lock().unwrap();
+    let mut pkids = state.pkids.lock();
 
     let pkid = packet.packet_identifier();
 
@@ -243,7 +242,7 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
 }
 
 fn handle_unsuback(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock().unwrap();
+    let mut pkids = state.pkids.lock();
     if let Some(Token::Unsubscribe(token)) = pkids.get_token(pkid) {
         let topics = token.topics();
 

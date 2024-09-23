@@ -4,16 +4,16 @@ use mqtt_codec_kit::v4::packet::VariablePacket;
 
 use crate::error::MqttError;
 
+pub use self::{
+    connect_token::ConnectToken, disconnect_token::DisconnectToken, publish_token::PublishToken,
+    subscribe_token::SubscribeToken, unsubscribe_token::UnsubscribeToken,
+};
+
 pub mod connect_token;
 pub mod disconnect_token;
 pub mod publish_token;
 pub mod subscribe_token;
 pub mod unsubscribe_token;
-
-pub use self::{
-    connect_token::ConnectToken, disconnect_token::DisconnectToken, publish_token::PublishToken,
-    subscribe_token::SubscribeToken, unsubscribe_token::UnsubscribeToken,
-};
 
 pub enum Token {
     Connect(ConnectToken),
@@ -80,7 +80,7 @@ macro_rules! enable_future {
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
-                let mut inner = self.inner.lock().unwrap();
+                let mut inner = self.inner.lock();
                 let inner = &mut *inner;
 
                 if inner.state.complete {

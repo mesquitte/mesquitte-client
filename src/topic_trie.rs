@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
+
+use parking_lot::RwLock;
 
 use crate::topic_store::{OnMessageArrivedHandler, TopicStore};
 
@@ -38,7 +37,7 @@ impl MqttTopicTrie {
         for token in topic_tokens {
             let next_node_arc;
             {
-                let mut node = current_node.write().unwrap();
+                let mut node = current_node.write();
                 next_node_arc = node
                     .children
                     .entry(token)
@@ -48,7 +47,7 @@ impl MqttTopicTrie {
             current_node = next_node_arc;
         }
 
-        current_node.write().unwrap().handlers.push(handler);
+        current_node.write().handlers.push(handler);
     }
 
     fn remove(&self, topic_tokens: Vec<String>) -> bool {
@@ -58,7 +57,7 @@ impl MqttTopicTrie {
         for token in &topic_tokens {
             let next_node_arc;
             {
-                let node = current_node.read().unwrap();
+                let node = current_node.read();
                 match node.children.get(token) {
                     Some(next_node) => {
                         nodes_to_cleanup.push((Arc::clone(&current_node), token.clone()));
@@ -71,16 +70,16 @@ impl MqttTopicTrie {
         }
 
         {
-            let mut final_node = current_node.write().unwrap();
+            let mut final_node = current_node.write();
             final_node.handlers.clear();
         }
 
         for (node, token) in nodes_to_cleanup.into_iter().rev() {
             let remove_child;
             {
-                let node_read = node.read().unwrap();
+                let node_read = node.read();
                 if let Some(child_node) = node_read.children.get(&token) {
-                    let child_read = child_node.read().unwrap();
+                    let child_read = child_node.read();
                     remove_child = child_read.children.is_empty() && child_read.handlers.is_empty();
                 } else {
                     remove_child = false;
@@ -88,7 +87,7 @@ impl MqttTopicTrie {
             }
 
             if remove_child {
-                let mut node_write = node.write().unwrap();
+                let mut node_write = node.write();
                 node_write.children.remove(&token);
             }
         }
@@ -109,7 +108,7 @@ impl MqttTopicTrie {
         level: usize,
         matching_handlers: &mut Vec<OnMessageArrivedHandler>,
     ) {
-        let node_read = node.read().unwrap();
+        let node_read = node.read();
 
         if level == tokens.len() {
             matching_handlers.extend(node_read.handlers.clone());
@@ -129,7 +128,7 @@ impl MqttTopicTrie {
 
         // Match multi-level wildcard "#", it matches the rest of the tokens
         if let Some(hash_node) = node_read.children.get("#") {
-            matching_handlers.extend(hash_node.read().unwrap().handlers.clone());
+            matching_handlers.extend(hash_node.read().handlers.clone());
         }
     }
 }

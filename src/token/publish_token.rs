@@ -1,8 +1,6 @@
-use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-    task::Poll,
-};
+use std::{future::Future, sync::Arc, task::Poll};
+
+use parking_lot::Mutex;
 
 use mqtt_codec_kit::common::QualityOfService;
 
@@ -37,14 +35,14 @@ pub struct PublishToken {
 
 impl PublishToken {
     pub(crate) fn set_qos(&mut self, qos: QualityOfService) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         inner.qos = qos;
     }
 
     pub(crate) fn qos(&self) -> QualityOfService {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         let inner = &*inner;
 
         inner.qos
@@ -55,7 +53,7 @@ enable_future!(PublishToken);
 
 impl Tokenize for PublishToken {
     fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         inner.error = Some(error);
@@ -66,7 +64,7 @@ impl Tokenize for PublishToken {
     }
 
     fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         inner.state.complete = true;

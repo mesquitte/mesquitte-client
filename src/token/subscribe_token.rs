@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{Arc, Mutex},
-    task::Poll,
-};
+use std::{collections::HashMap, future::Future, sync::Arc, task::Poll};
+
+use parking_lot::Mutex;
 
 use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
 
@@ -35,7 +32,7 @@ impl SubscribeToken {
         &mut self,
         subscriptions: Vec<(S, OnMessageArrivedHandler)>,
     ) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         for (topic, handler) in subscriptions {
@@ -46,14 +43,14 @@ impl SubscribeToken {
     }
 
     pub(crate) fn get_handler<S: Into<String>>(&self, topic: S) -> Option<OnMessageArrivedHandler> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         let inner = &*inner;
 
         inner.handlers.get(&topic.into()).copied()
     }
 
     pub(crate) fn set_result(&mut self, index: usize, result: SubscribeReturnCode) -> String {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         let mut return_topic = String::new();
@@ -68,7 +65,7 @@ impl SubscribeToken {
     }
 
     pub fn result(&self) -> HashMap<String, SubscribeReturnCode> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         let inner = &*inner;
 
         inner.results.clone()
@@ -79,7 +76,7 @@ enable_future!(SubscribeToken);
 
 impl Tokenize for SubscribeToken {
     fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         inner.error = Some(error);
@@ -90,7 +87,7 @@ impl Tokenize for SubscribeToken {
     }
 
     fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
         inner.state.complete = true;

@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use mqtt_codec_kit::common::QualityOfService;
+
 use topic_store::OnMessageArrivedHandler;
 
 pub mod client;
