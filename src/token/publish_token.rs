@@ -5,25 +5,25 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::common::QualityOfService;
 
 use crate::{
-    enable_future,
+    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
 };
 
 use super::{State, Tokenize};
 
 struct InnerToken {
-    error: Option<MqttError>,
     qos: QualityOfService,
 
     state: State,
+    error: Option<MqttError>,
 }
 
 impl Default for InnerToken {
     fn default() -> Self {
         Self {
-            error: Default::default(),
             qos: QualityOfService::Level0,
             state: Default::default(),
+            error: Default::default(),
         }
     }
 }
@@ -51,25 +51,4 @@ impl PublishToken {
 
 enable_future!(PublishToken);
 
-impl Tokenize for PublishToken {
-    fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.error = Some(error);
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-}
+enable_tokenize!(PublishToken);

@@ -180,19 +180,19 @@ impl TopicManager {
 
 #[cfg(test)]
 mod test {
-    use mqtt_codec_kit::common::QualityOfService;
+    use crate::message::Message;
 
     use super::TopicManager;
 
-    fn handler1(_topic: &str, _payload: &[u8], _qos: QualityOfService) {
+    fn handler1(_msg: &Message) {
         println!("handler1");
     }
 
-    fn handler2(_topic: &str, _payload: &[u8], _qos: QualityOfService) {
+    fn handler2(_msg: &Message) {
         println!("handler2");
     }
 
-    fn handler3(_topic: &str, _payload: &[u8], _qos: QualityOfService) {
+    fn handler3(_msg: &Message) {
         println!("handler3");
     }
 

@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc, task::Poll};
 use parking_lot::Mutex;
 
 use crate::{
-    enable_future,
+    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
 };
 
@@ -12,7 +12,6 @@ use super::{State, Tokenize};
 #[derive(Default)]
 struct InnerToken {
     error: Option<MqttError>,
-
     state: State,
 }
 
@@ -23,25 +22,4 @@ pub struct DisconnectToken {
 
 enable_future!(DisconnectToken);
 
-impl Tokenize for DisconnectToken {
-    fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-        inner.error = Some(error);
-
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-}
+enable_tokenize!(DisconnectToken);

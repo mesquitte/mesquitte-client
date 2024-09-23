@@ -1,22 +1,28 @@
 use std::env;
 
-use mesquitte_client::{client::TcpClient, options::ClientOptions, Client};
+use mesquitte_client::{client::TcpClient, message::Message, options::ClientOptions, Client};
 use mqtt_codec_kit::common::QualityOfService;
 use tokio::signal;
 
-fn handler1(topic: &str, payload: &[u8], qos: QualityOfService) {
+fn handler1(msg: &Message) {
     log::info!(
-        "message from hander1: topic: {topic}, payload: {:?}, qos: {:?}",
-        payload,
-        qos
+        "message from handler1, topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
+        msg.topic(),
+        String::from_utf8(msg.payload().to_vec()),
+        msg.qos(),
+        msg.retain(),
+        msg.dup()
     );
 }
 
-fn handler2(topic: &str, payload: &[u8], qos: QualityOfService) {
+fn handler2(msg: &Message) {
     log::info!(
-        "message from hander2: topic: {topic}, payload: {:?}, qos: {:?}",
-        payload,
-        qos
+        "message from handler2, topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
+        msg.topic(),
+        String::from_utf8(msg.payload().to_vec()),
+        msg.qos(),
+        msg.retain(),
+        msg.dup()
     );
 }
 

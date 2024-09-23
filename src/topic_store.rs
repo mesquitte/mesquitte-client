@@ -1,7 +1,7 @@
-use mqtt_codec_kit::common::QualityOfService;
+use crate::message::Message;
 
 // Type alias for the handler function signature
-pub type OnMessageArrivedHandler = fn(&str, &[u8], QualityOfService);
+pub type OnMessageArrivedHandler = fn(&Message);
 
 pub trait TopicStore {
     fn add_subscription(&self, handler: OnMessageArrivedHandler, topic_tokens: Vec<String>);

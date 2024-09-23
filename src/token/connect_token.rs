@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::v4::control::ConnectReturnCode;
 
 use crate::{
-    enable_future,
+    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
 };
 
@@ -17,20 +17,20 @@ pub struct ConnectToken {
 }
 
 struct InnerToken {
-    error: Option<MqttError>,
     return_code: ConnectReturnCode,
     session_present: bool,
 
     state: State,
+    error: Option<MqttError>,
 }
 
 impl Default for InnerToken {
     fn default() -> Self {
         Self {
-            error: Default::default(),
             return_code: ConnectReturnCode::ConnectionAccepted,
             session_present: Default::default(),
             state: Default::default(),
+            error: Default::default(),
         }
     }
 }
@@ -67,25 +67,4 @@ impl ConnectToken {
 
 enable_future!(ConnectToken);
 
-impl Tokenize for ConnectToken {
-    fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.error = Some(error);
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-}
+enable_tokenize!(ConnectToken);

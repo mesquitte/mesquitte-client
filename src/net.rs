@@ -144,13 +144,13 @@ where
                         }
 
                         match outgoing.token {
-                            Some(Token::Publish(mut t)) => {
-                                if t.qos() == QualityOfService::Level0 {
-                                    t.flow_complete()
+                            Some(Token::Publish(mut token)) => {
+                                if token.qos() == QualityOfService::Level0 {
+                                    token.flow_complete()
                                 }
                             },
-                            Some(Token::Disconnect(mut t)) => {
-                                t.flow_complete()
+                            Some(Token::Disconnect(mut token)) => {
+                                token.flow_complete()
                             }
                             _ => {},
                         };
@@ -178,7 +178,7 @@ fn handle_publish(
         .topic_manager
         .match_topic(packet.topic_name().to_string());
     for handler in handlers {
-        handler(packet.topic_name(), packet.payload(), qos);
+        handler(&packet.into());
     }
 
     match qos {

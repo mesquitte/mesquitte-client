@@ -23,7 +23,7 @@ pub(crate) enum MqttError {
 #[derive(Debug)]
 pub enum TokenError {
     IOError(String),
-    NotConnect,
+    NotConnected,
     MqttConnectFailed(u8),
     ConnectionLost,
     InvalidTopic,
@@ -36,7 +36,7 @@ impl From<&MqttError> for TokenError {
     fn from(value: &MqttError) -> Self {
         match value {
             MqttError::IOError(e) => TokenError::IOError(e.to_string()),
-            MqttError::NetworkUnreachable => TokenError::NotConnect,
+            MqttError::NetworkUnreachable => TokenError::NotConnected,
             MqttError::MqttConnectFailed(n) => TokenError::MqttConnectFailed(*n),
             MqttError::ConnectionLost => TokenError::ConnectionLost,
             MqttError::ProtocolError => TokenError::PacketError("Protocol Error".to_string()),

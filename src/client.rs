@@ -510,12 +510,19 @@ mod test {
     use mqtt_codec_kit::common::QualityOfService;
     use tokio::signal;
 
-    use crate::client::Client;
+    use crate::{client::Client, message::Message};
 
     use super::{ClientOptions, TcpClient};
 
-    fn handler(topic: &str, payload: &[u8], qos: QualityOfService) {
-        log::debug!("topic: {topic}, payload: {:?}, qos: {:?}", payload, qos);
+    fn handler(msg: &Message) {
+        log::debug!(
+            "topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
+            msg.topic(),
+            String::from_utf8(msg.payload().to_vec()),
+            msg.qos(),
+            msg.retain(),
+            msg.dup()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

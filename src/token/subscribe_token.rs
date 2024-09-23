@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
 
 use crate::{
-    enable_future,
+    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
     topic_store::OnMessageArrivedHandler,
 };
@@ -14,12 +14,12 @@ use super::{State, Tokenize};
 
 #[derive(Default)]
 struct InnerToken {
-    error: Option<MqttError>,
     topics: Vec<String>,
     handlers: HashMap<String, OnMessageArrivedHandler>,
     results: HashMap<String, SubscribeReturnCode>,
 
     state: State,
+    error: Option<MqttError>,
 }
 
 #[derive(Clone, Default)]
@@ -74,25 +74,4 @@ impl SubscribeToken {
 
 enable_future!(SubscribeToken);
 
-impl Tokenize for SubscribeToken {
-    fn set_error(&mut self, error: MqttError) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.error = Some(error);
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn flow_complete(&mut self) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-
-        inner.state.complete = true;
-        if let Some(waker) = inner.state.waker.take() {
-            waker.wake();
-        }
-    }
-}
+enable_tokenize!(SubscribeToken);

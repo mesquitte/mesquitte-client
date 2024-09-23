@@ -94,3 +94,31 @@ macro_rules! enable_future {
         }
     };
 }
+
+#[macro_export]
+macro_rules! enable_tokenize {
+    ($typ:ident) => {
+        impl Tokenize for $typ {
+            fn set_error(&mut self, error: MqttError) {
+                let mut inner = self.inner.lock();
+                let inner = &mut *inner;
+                inner.error = Some(error);
+
+                inner.state.complete = true;
+                if let Some(waker) = inner.state.waker.take() {
+                    waker.wake();
+                }
+            }
+
+            fn flow_complete(&mut self) {
+                let mut inner = self.inner.lock();
+                let inner = &mut *inner;
+
+                inner.state.complete = true;
+                if let Some(waker) = inner.state.waker.take() {
+                    waker.wake();
+                }
+            }
+        }
+    };
+}
