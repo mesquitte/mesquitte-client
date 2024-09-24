@@ -1,20 +1,33 @@
-use parking_lot::Mutex;
+use std::time::Duration;
 
+use moka::future::Cache;
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use crate::{pkid::PacketIds, token::PacketAndToken, topic_trie::TopicManager};
+use mqtt_codec_kit::v4::packet::PublishPacket;
+
+use crate::{
+    pkid::{self, PacketIds},
+    token::PacketAndToken,
+    topic_trie::TopicManager,
+};
 
 pub struct State {
-    pub pkids: Mutex<PacketIds>,
+    pub packet_ids: Mutex<PacketIds>,
     pub topic_manager: TopicManager,
+    pub pending_packets: Cache<u16, PublishPacket>,
     pub outgoing_tx: Option<mpsc::Sender<PacketAndToken>>,
 }
 
 impl State {
     pub fn new() -> Self {
         Self {
-            pkids: Mutex::new(PacketIds::new()),
+            packet_ids: Mutex::new(PacketIds::new()),
             topic_manager: TopicManager::new(),
+            pending_packets: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .max_capacity(pkid::PKID_MAX.into())
+                .build(),
             outgoing_tx: None,
         }
     }

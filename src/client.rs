@@ -261,7 +261,7 @@ impl Client for TcpClient {
         let qos = match qos {
             QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
             QualityOfService::Level1 => {
-                let mut pkids = self.state.pkids.lock();
+                let mut pkids = self.state.packet_ids.lock();
                 let pkid = pkids.get_id(Token::Publish(token.clone()));
 
                 if pkid == 0 {
@@ -272,7 +272,7 @@ impl Client for TcpClient {
                 QoSWithPacketIdentifier::Level1(pkid)
             }
             QualityOfService::Level2 => {
-                let mut pkids = self.state.pkids.lock();
+                let mut pkids = self.state.packet_ids.lock();
                 let pkid = pkids.get_id(Token::Publish(token.clone()));
 
                 if pkid == 0 {
@@ -334,7 +334,7 @@ impl Client for TcpClient {
 
         let pkid;
         {
-            let mut pkids = self.state.pkids.lock();
+            let mut pkids = self.state.packet_ids.lock();
             pkid = pkids.get_id(Token::Subscribe(token.clone()));
         }
 
@@ -393,7 +393,7 @@ impl Client for TcpClient {
 
         let pkid;
         {
-            let mut pkids = self.state.pkids.lock();
+            let mut pkids = self.state.packet_ids.lock();
             pkid = pkids.get_id(Token::Subscribe(token.clone()));
         }
 
@@ -457,7 +457,7 @@ impl Client for TcpClient {
 
         let pkid;
         {
-            let mut pkids = self.state.pkids.lock();
+            let mut pkids = self.state.packet_ids.lock();
             pkid = pkids.get_id(Token::Unsubscribe(token.clone()));
         }
 

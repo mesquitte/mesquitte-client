@@ -1,6 +1,6 @@
 use mqtt_codec_kit::{common::QualityOfService, v4::packet::PublishPacket};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     topic: String,
     payload: Vec<u8>,

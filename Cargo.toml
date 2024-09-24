@@ -9,6 +9,7 @@ v4 = ["mqtt-codec-kit/v4", "mqtt-codec-kit/tokio-codec"]
 
 [dependencies]
 futures = { version = "0.3" }
+moka = { version = "0.12", features = ["future"] }
 mqtt-codec-kit = { version = "1.0" }
 parking_lot = "0.12"
 thiserror = "1.0"

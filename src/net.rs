@@ -17,6 +17,7 @@ use mqtt_codec_kit::{
 
 use crate::{
     error::MqttError,
+    message::Message,
     state::State,
     token::{PacketAndToken, Token, Tokenize},
 };
@@ -69,7 +70,7 @@ where
                     Some(packet) => {
                         let resp = match packet {
                             VariablePacket::PublishPacket(packet) => {
-                                match handle_publish(&packet, state.clone()) {
+                                match handle_publish(&packet, state.clone()).await {
                                     Ok(Some(resp)) => resp,
                                     Ok(None) => continue,
                                     Err(err) => {
@@ -86,7 +87,7 @@ where
                                 handle_pubrec(packet.packet_identifier())
                             }
                             VariablePacket::PubrelPacket(packet) => {
-                                handle_pubrel(packet.packet_identifier())
+                                handle_pubrel(packet.packet_identifier(), state.clone()).await
                             }
                             VariablePacket::PubcompPacket(packet) => {
                                 handle_pubcomp(packet.packet_identifier(), state.clone());
@@ -168,7 +169,7 @@ where
     Ok(())
 }
 
-fn handle_publish(
+async fn handle_publish(
     packet: &PublishPacket,
     state: Arc<State>,
 ) -> Result<Option<VariablePacket>, MqttError> {
@@ -177,25 +178,54 @@ fn handle_publish(
     let handlers = &state
         .topic_manager
         .match_topic(packet.topic_name().to_string());
-    for handler in handlers {
-        handler(&packet.into());
-    }
 
     match qos {
-        QualityOfService::Level0 => Ok(None),
+        QualityOfService::Level0 => {
+            // process message via callback
+            let packet: Message = packet.into();
+
+            for handler in handlers {
+                let handler = *handler;
+                let packet = packet.clone();
+                tokio::spawn(async move {
+                    handler(&packet);
+                });
+            }
+
+            Ok(None)
+        }
         QualityOfService::Level1 => {
+            // process message via callback
+            let packet: Message = packet.into();
+
+            for handler in handlers {
+                let handler = *handler;
+                let packet = packet.clone();
+                tokio::spawn(async move {
+                    handler(&packet);
+                });
+            }
+
             let puback = PubackPacket::new(pkid.unwrap());
             Ok(Some(VariablePacket::new(puback)))
         }
         QualityOfService::Level2 => {
-            let pubrec = PubrecPacket::new(pkid.unwrap());
+            let pkid = pkid.unwrap();
+            // store message to pending_packets
+            if state.pending_packets.contains_key(&pkid) {
+                log::debug!("received duplicate message: packet_id {}", pkid);
+            }
+            state.pending_packets.insert(pkid, packet.clone()).await;
+
+            let pubrec = PubrecPacket::new(pkid);
             Ok(Some(VariablePacket::new(pubrec)))
         }
     }
 }
 
 fn handle_puback(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock();
+    let mut pkids = state.packet_ids.lock();
+
     if let Some(token) = pkids.get_token(pkid) {
         token.flow_complete();
         pkids.free_id(&pkid);
@@ -207,13 +237,36 @@ fn handle_pubrec(pkid: u16) -> VariablePacket {
     VariablePacket::new(pubrel)
 }
 
-fn handle_pubrel(pkid: u16) -> VariablePacket {
+async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
+    let packet = state.pending_packets.remove(&pkid).await;
+
+    match packet {
+        Some(packet) => {
+            let handlers = &state
+                .topic_manager
+                .match_topic(packet.topic_name().to_string());
+
+            let msg = Message::from(&packet);
+
+            // process message via callback
+            for handler in handlers {
+                let handler = *handler;
+                let msg = msg.clone();
+                tokio::spawn(async move {
+                    handler(&msg);
+                });
+            }
+        }
+        None => log::error!("packet id {} not found.", pkid),
+    }
+
     let pubcomp = PubcompPacket::new(pkid);
     VariablePacket::new(pubcomp)
 }
 
 fn handle_pubcomp(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock();
+    let mut pkids = state.packet_ids.lock();
+
     if let Some(token) = pkids.get_token(pkid) {
         token.flow_complete();
         pkids.free_id(&pkid);
@@ -221,7 +274,7 @@ fn handle_pubcomp(pkid: u16, state: Arc<State>) {
 }
 
 fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
-    let mut pkids = state.pkids.lock();
+    let mut pkids = state.packet_ids.lock();
 
     let pkid = packet.packet_identifier();
 
@@ -242,7 +295,8 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
 }
 
 fn handle_unsuback(pkid: u16, state: Arc<State>) {
-    let mut pkids = state.pkids.lock();
+    let mut pkids = state.packet_ids.lock();
+
     if let Some(Token::Unsubscribe(token)) = pkids.get_token(pkid) {
         let topics = token.topics();
 

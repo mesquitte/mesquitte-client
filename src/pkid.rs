@@ -2,7 +2,7 @@ use std::collections::{hash_map, HashMap};
 
 use crate::{error::MqttError, token::Token};
 
-const PKID_MAX: u16 = 65535;
+pub const PKID_MAX: u16 = 65535;
 const PKID_MIN: u16 = 1;
 
 pub struct PacketIds {
