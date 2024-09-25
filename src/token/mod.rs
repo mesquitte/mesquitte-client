@@ -51,7 +51,14 @@ pub struct PacketAndToken {
 }
 
 impl PacketAndToken {
-    pub fn new(packet: VariablePacket, token: Token) -> Self {
+    pub fn new(packet: VariablePacket) -> Self {
+        Self {
+            packet,
+            token: None,
+        }
+    }
+
+    pub fn new_with(packet: VariablePacket, token: Token) -> Self {
         Self {
             packet,
             token: Some(token),

@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use tokio::{
@@ -14,6 +15,7 @@ use tokio::{
         TcpStream,
     },
     sync::mpsc,
+    time::timeout,
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
 
@@ -30,7 +32,7 @@ use mqtt_codec_kit::{
 
 use crate::{
     error::MqttError,
-    net::{read_from_server, write_to_server},
+    net::{keep_alive, read_from_server, write_to_server},
     options::ClientOptions,
     state::State,
     token::{
@@ -47,16 +49,19 @@ struct Network {
 }
 
 impl Network {
-    async fn connect(addr: SocketAddr) -> Result<Self, MqttError> {
-        match TcpStream::connect(addr).await {
-            Ok(s) => {
-                let (rd, wr) = s.into_split();
-                Ok(Self {
-                    frame_reader: FramedRead::new(rd, MqttDecoder::new()),
-                    frame_writer: FramedWrite::new(wr, MqttEncoder::new()),
-                })
-            }
-            Err(e) => Err(MqttError::IOError(e)),
+    async fn connect(addr: SocketAddr, connect_timeout: Duration) -> Result<Self, MqttError> {
+        match timeout(connect_timeout, TcpStream::connect(addr)).await {
+            Ok(res) => match res {
+                Ok(s) => {
+                    let (rd, wr) = s.into_split();
+                    Ok(Self {
+                        frame_reader: FramedRead::new(rd, MqttDecoder::new()),
+                        frame_writer: FramedWrite::new(wr, MqttEncoder::new()),
+                    })
+                }
+                Err(e) => Err(MqttError::IOError(e)),
+            },
+            Err(_) => Err(MqttError::ConnectTimeout),
         }
     }
 }
@@ -112,25 +117,29 @@ impl Client for TcpClient {
         let addrs = lookup_host(self.options.server()).await.unwrap();
 
         let mut network: Option<Network> = None;
+        let mut connect_error = MqttError::NetworkUnreachable;
 
         let mut token = ConnectToken::default();
 
         for addr in addrs {
-            match Network::connect(addr).await {
+            match Network::connect(addr, self.options.connect_timeout()).await {
                 Ok(n) => {
                     network = Some(n);
                     break;
                 }
-                Err(_) => network = None,
+                Err(e) => {
+                    network = None;
+                    connect_error = e;
+                }
             }
         }
 
         if network.is_none() {
-            token.set_error(MqttError::NetworkUnreachable);
+            token.set_error(connect_error);
             return token;
         }
 
-        let packet = VariablePacket::new(self.build_connect_packet());
+        let packet: VariablePacket = self.build_connect_packet().into();
 
         let mut network = network.unwrap();
 
@@ -151,8 +160,10 @@ impl Client for TcpClient {
                                 self.state = Arc::new(state);
 
                                 let state = self.state.clone();
+                                let ping_state = state.clone();
 
                                 let connected = self.connected.clone();
+                                let keep_alive_duration = self.options.keep_alive();
 
                                 tokio::spawn(async move {
                                     let (msg_tx, msg_rx) = mpsc::channel(8);
@@ -173,12 +184,21 @@ impl Client for TcpClient {
                                         }
                                     });
 
+                                    let exit = Arc::new(AtomicBool::new(false));
+                                    let exit_ping = exit.clone();
+
+                                    tokio::spawn(async move {
+                                        keep_alive(keep_alive_duration, ping_state, exit_ping)
+                                            .await;
+                                    });
+
                                     if tokio::try_join!(&mut read_task, &mut write_task).is_err() {
                                         log::error!("read_task/write_task terminated");
                                         read_task.abort();
                                     };
 
                                     connected.store(false, Ordering::SeqCst);
+                                    exit.store(true, Ordering::SeqCst);
                                 });
 
                                 self.connected.store(true, Ordering::SeqCst);
@@ -216,7 +236,7 @@ impl Client for TcpClient {
             return token;
         }
 
-        let packet = VariablePacket::new(DisconnectPacket::new());
+        let packet = DisconnectPacket::new().into();
 
         log::debug!("send disconnect packet");
         if self
@@ -224,7 +244,7 @@ impl Client for TcpClient {
             .outgoing_tx
             .clone()
             .unwrap()
-            .send(PacketAndToken::new(
+            .send(PacketAndToken::new_with(
                 packet,
                 Token::Disconnect(token.clone()),
             ))
@@ -297,7 +317,7 @@ impl Client for TcpClient {
         let mut packet = PublishPacket::new(topic_name, qos, payload);
         packet.set_retain(retained);
 
-        let packet = VariablePacket::new(packet);
+        let packet = packet.into();
 
         log::debug!("send publish packet");
         if self
@@ -305,7 +325,10 @@ impl Client for TcpClient {
             .outgoing_tx
             .clone()
             .unwrap()
-            .send(PacketAndToken::new(packet, Token::Publish(token.clone())))
+            .send(PacketAndToken::new_with(
+                packet,
+                Token::Publish(token.clone()),
+            ))
             .await
             .is_err()
         {
@@ -353,7 +376,7 @@ impl Client for TcpClient {
 
         let subscribes = vec![(topic_filter, qos)];
 
-        let packet = VariablePacket::new(SubscribePacket::new(pkid, subscribes));
+        let packet = SubscribePacket::new(pkid, subscribes).into();
 
         log::debug!("send subscribe packet");
         if self
@@ -361,10 +384,10 @@ impl Client for TcpClient {
             .outgoing_tx
             .clone()
             .unwrap()
-            .send(PacketAndToken {
+            .send(PacketAndToken::new_with(
                 packet,
-                token: Some(Token::Subscribe(token.clone())),
-            })
+                Token::Subscribe(token.clone()),
+            ))
             .await
             .is_err()
         {
@@ -421,7 +444,7 @@ impl Client for TcpClient {
             subscriptions.push((topic, callback));
         }
 
-        let packet = VariablePacket::new(SubscribePacket::new(pkid, subscribes));
+        let packet = SubscribePacket::new(pkid, subscribes).into();
 
         log::debug!("send subscribe packet");
         if self
@@ -429,10 +452,10 @@ impl Client for TcpClient {
             .outgoing_tx
             .clone()
             .unwrap()
-            .send(PacketAndToken {
+            .send(PacketAndToken::new_with(
                 packet,
-                token: Some(Token::Subscribe(token.clone())),
-            })
+                Token::Subscribe(token.clone()),
+            ))
             .await
             .is_err()
         {
@@ -482,17 +505,17 @@ impl Client for TcpClient {
             token.add_topic(topic);
         }
 
-        let packet = VariablePacket::new(UnsubscribePacket::new(pkid, unsubscribes));
+        let packet = UnsubscribePacket::new(pkid, unsubscribes).into();
 
         if self
             .state
             .outgoing_tx
             .clone()
             .unwrap()
-            .send(PacketAndToken {
+            .send(PacketAndToken::new_with(
                 packet,
-                token: Some(Token::Unsubscribe(token.clone())),
-            })
+                Token::Unsubscribe(token.clone()),
+            ))
             .await
             .is_err()
         {

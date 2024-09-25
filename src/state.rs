@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use moka::future::Cache;
 use parking_lot::Mutex;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::Instant};
 
 use mqtt_codec_kit::v4::packet::PublishPacket;
 
@@ -17,6 +17,7 @@ pub struct State {
     pub topic_manager: TopicManager,
     pub pending_packets: Cache<u16, PublishPacket>,
     pub outgoing_tx: Option<mpsc::Sender<PacketAndToken>>,
+    pub last_sent_packet_at: Mutex<Instant>,
 }
 
 impl State {
@@ -29,6 +30,7 @@ impl State {
                 .max_capacity(pkid::PKID_MAX.into())
                 .build(),
             outgoing_tx: None,
+            last_sent_packet_at: Mutex::new(Instant::now()),
         }
     }
 }

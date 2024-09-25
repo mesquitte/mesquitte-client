@@ -1,17 +1,25 @@
 use futures::{SinkExt, StreamExt};
-use std::{io, sync::Arc};
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,
+    time::{sleep, sleep_until, Instant},
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 
 use mqtt_codec_kit::{
     common::QualityOfService,
     v4::packet::{
-        suback::SubscribeReturnCode, PubackPacket, PubcompPacket, PublishPacket, PubrecPacket,
-        PubrelPacket, SubackPacket, VariablePacket, VariablePacketError,
+        suback::SubscribeReturnCode, PingreqPacket, PubackPacket, PubcompPacket, PublishPacket,
+        PubrecPacket, PubrelPacket, SubackPacket, VariablePacket, VariablePacketError,
     },
 };
 
@@ -144,6 +152,11 @@ where
                             break;
                         }
 
+                        {
+                            let mut last_sent_packet_at = state.last_sent_packet_at.lock();
+                            *last_sent_packet_at = Instant::now();
+                        }
+
                         match outgoing.token {
                             Some(Token::Publish(mut token)) => {
                                 if token.qos() == QualityOfService::Level0 {
@@ -167,6 +180,40 @@ where
     log::info!("write loop exited");
 
     Ok(())
+}
+
+pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicBool>) {
+    while !exit.load(Ordering::SeqCst) {
+        let elapsed;
+        {
+            let last_sent_packet_at = state.last_sent_packet_at.lock();
+            let now = Instant::now();
+            elapsed = now.duration_since(*last_sent_packet_at);
+        }
+
+        if elapsed >= duration {
+            let packet = PingreqPacket::new().into();
+            log::debug!("send pingreq packet");
+            if state
+                .outgoing_tx
+                .clone()
+                .unwrap()
+                .send(PacketAndToken::new(packet))
+                .await
+                .is_err()
+            {
+                log::error!("send pingreq packet error");
+            }
+        } else {
+            let remaining = duration - elapsed;
+            let next_execution = Instant::now() + remaining;
+            sleep_until(next_execution).await;
+            continue;
+        }
+
+        sleep(duration).await;
+    }
+    log::info!("keep_alive loop exited");
 }
 
 async fn handle_publish(
@@ -206,8 +253,7 @@ async fn handle_publish(
                 });
             }
 
-            let puback = PubackPacket::new(pkid.unwrap());
-            Ok(Some(VariablePacket::new(puback)))
+            Ok(Some(PubackPacket::new(pkid.unwrap()).into()))
         }
         QualityOfService::Level2 => {
             let pkid = pkid.unwrap();
@@ -217,8 +263,7 @@ async fn handle_publish(
             }
             state.pending_packets.insert(pkid, packet.clone()).await;
 
-            let pubrec = PubrecPacket::new(pkid);
-            Ok(Some(VariablePacket::new(pubrec)))
+            Ok(Some(PubrecPacket::new(pkid).into()))
         }
     }
 }
@@ -233,8 +278,7 @@ fn handle_puback(pkid: u16, state: Arc<State>) {
 }
 
 fn handle_pubrec(pkid: u16) -> VariablePacket {
-    let pubrel = PubrelPacket::new(pkid);
-    VariablePacket::new(pubrel)
+    PubrelPacket::new(pkid).into()
 }
 
 async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
@@ -260,8 +304,7 @@ async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
         None => log::error!("packet id {} not found.", pkid),
     }
 
-    let pubcomp = PubcompPacket::new(pkid);
-    VariablePacket::new(pubcomp)
+    PubcompPacket::new(pkid).into()
 }
 
 fn handle_pubcomp(pkid: u16, state: Arc<State>) {

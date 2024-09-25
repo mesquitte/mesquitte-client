@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use mqtt_codec_kit::common::QualityOfService;
 
 pub struct ClientOptions {
@@ -11,8 +13,8 @@ pub struct ClientOptions {
     will_payload: Vec<u8>,
     will_qos: QualityOfService,
     will_retained: bool,
-    keep_alive: i32,
-    connect_timeout: i32,
+    keep_alive: Duration,
+    connect_timeout: Duration,
 }
 
 impl Default for ClientOptions {
@@ -37,8 +39,8 @@ impl Default for ClientOptions {
 impl ClientOptions {
     pub fn new() -> Self {
         Self {
-            keep_alive: 30,
-            connect_timeout: 10,
+            keep_alive: Duration::from_secs(30),
+            connect_timeout: Duration::from_secs(10),
             ..Default::default()
         }
     }
@@ -88,6 +90,16 @@ impl ClientOptions {
         self
     }
 
+    pub fn set_keep_alive(&mut self, keep_alive: Duration) -> &mut Self {
+        self.keep_alive = keep_alive;
+        self
+    }
+
+    pub fn set_connect_timeout(&mut self, connect_timeout: Duration) -> &mut Self {
+        self.connect_timeout = connect_timeout;
+        self
+    }
+
     pub fn server(&self) -> &String {
         &self.server
     }
@@ -126,5 +138,13 @@ impl ClientOptions {
 
     pub fn will_retained(&self) -> bool {
         self.will_retained
+    }
+
+    pub fn keep_alive(&self) -> Duration {
+        self.keep_alive
+    }
+
+    pub fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
     }
 }
