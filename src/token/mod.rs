@@ -15,6 +15,7 @@ pub mod publish_token;
 pub mod subscribe_token;
 pub mod unsubscribe_token;
 
+#[derive(Clone)]
 pub enum Token {
     Connect(ConnectToken),
     Disconnect(DisconnectToken),

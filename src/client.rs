@@ -8,14 +8,15 @@ use std::{
     time::Duration,
 };
 
+use parking_lot::Mutex;
 use tokio::{
     net::{
         lookup_host,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
-    sync::mpsc,
-    time::timeout,
+    sync::{mpsc, Notify},
+    time::{self, timeout},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
 
@@ -43,6 +44,13 @@ use crate::{
     Client,
 };
 
+#[derive(Clone, Copy, PartialEq)]
+enum ConnectStatus {
+    Connected,
+    Disconnected,
+    Connecting,
+}
+
 struct Network {
     pub frame_reader: FramedRead<OwnedReadHalf, MqttDecoder>,
     pub frame_writer: FramedWrite<OwnedWriteHalf, MqttEncoder>,
@@ -69,7 +77,8 @@ impl Network {
 pub struct TcpClient {
     options: ClientOptions,
     state: Arc<State>,
-    connected: Arc<AtomicBool>,
+    connect_status: Arc<Mutex<ConnectStatus>>,
+    notify: Arc<Notify>,
 }
 
 impl TcpClient {
@@ -77,17 +86,31 @@ impl TcpClient {
         Self {
             options,
             state: Arc::new(State::new()),
-            connected: Arc::new(AtomicBool::new(false)),
+            connect_status: Arc::new(Mutex::new(ConnectStatus::Disconnected)),
+            notify: Arc::new(Notify::new()),
         }
     }
 
+    fn connect_status(&self) -> ConnectStatus {
+        let status = self.connect_status.lock();
+        *status
+    }
+
+    fn set_connect_status(&mut self, status: ConnectStatus) {
+        let mut connect_status = self.connect_status.lock();
+        *connect_status = status;
+    }
+
     pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::SeqCst)
+        let status = self.connect_status.lock();
+
+        *status == ConnectStatus::Connected
     }
 
     fn build_connect_packet(&self) -> ConnectPacket {
         let mut connect = ConnectPacket::new(self.options.client_id());
         connect.set_clean_session(self.options.clean_session());
+        connect.set_keep_alive(self.options.keep_alive().as_secs() as u16);
 
         if self.options.will_enabled() {
             connect.set_will_qos(self.options.will_qos() as u8);
@@ -110,16 +133,92 @@ impl TcpClient {
 
         connect
     }
+
+    pub async fn block(&mut self) {
+        let mut cnt = 0u16;
+        let max_connect_retry_times = self.options.max_connect_retry_times();
+        loop {
+            if max_connect_retry_times.is_some() && cnt >= max_connect_retry_times.unwrap() {
+                log::info!("max connect retry times reached, block exit.",);
+                return;
+            }
+            tokio::select! {
+                _ = time::sleep(self.options.connect_retry_interval()) => {
+                    match self.connect_status() {
+                        ConnectStatus::Connected => continue,
+                        ConnectStatus::Disconnected => {
+                            if self.options.auto_reconnect() {
+                                self.notify.notify_one();
+                            } else {
+                                log::info!("client disconnect, program exit.");
+                                return;
+                            }
+                        },
+                        ConnectStatus::Connecting => continue,
+                    }
+                },
+
+                _ = self.notify.notified() => {
+                    cnt += 1;
+                    log::info!("reconnecting @ {cnt}.");
+                    let token = self.connect().await;
+                    let err = token.clone().await;
+                    if err.is_some() {
+                        continue;
+                    }
+                    cnt = 0;
+                    log::info!("reconnect success.");
+                    if !token.session_present() {
+                        log::info!("session present flag is false, start resubscribe job.");
+                        {
+                            let mut packet_ids = self.state.packet_ids.lock();
+                            packet_ids.clean_up();
+                        }
+                        // resubscribe
+                        let subs;
+                        {
+                            let state = self.state.clone();
+                            let subscriptions = state.subscriptions.lock();
+
+                            subs = subscriptions.clone();
+                        }
+                        self.state.topic_manager.clear();
+
+                        for sub in subs {
+                            let token = self.subscribe(sub.topic.to_owned(), sub.qos, sub.handler).await;
+                            if token.await.is_none() {
+                                log::info!("resubscribe topic {} success.", sub.topic);
+                            } else {
+                                log::error!("resubscribe topic {} failed.", sub.topic);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Client for TcpClient {
     async fn connect(&mut self) -> ConnectToken {
+        let mut token = ConnectToken::default();
+
+        match self.connect_status() {
+            ConnectStatus::Connected => {
+                token.set_return_code(ConnectReturnCode::ConnectionAccepted);
+                return token;
+            }
+            ConnectStatus::Disconnected => self.set_connect_status(ConnectStatus::Connecting),
+            ConnectStatus::Connecting => {
+                token.set_error(MqttError::Reconnecting);
+                return token;
+            }
+        }
+
         let addrs = lookup_host(self.options.server()).await.unwrap();
 
         let mut network: Option<Network> = None;
         let mut connect_error = MqttError::NetworkUnreachable;
-
-        let mut token = ConnectToken::default();
 
         for addr in addrs {
             match Network::connect(addr, self.options.connect_timeout()).await {
@@ -135,6 +234,7 @@ impl Client for TcpClient {
         }
 
         if network.is_none() {
+            self.set_connect_status(ConnectStatus::Disconnected);
             token.set_error(connect_error);
             return token;
         }
@@ -155,21 +255,44 @@ impl Client for TcpClient {
 
                                 let mut state = State::new();
 
+                                {
+                                    let packet_ids = self.state.packet_ids.lock();
+                                    state.packet_ids = (*packet_ids).clone().into();
+                                }
+
+                                {
+                                    let subscribes = self.state.subscriptions.lock();
+                                    state.subscriptions = (*subscribes).clone().into();
+                                }
+
+                                state.topic_manager = self.state.topic_manager.clone();
+                                state.pending_packets = self.state.pending_packets.clone();
+
                                 state.outgoing_tx = Some(outgoing_tx);
 
                                 self.state = Arc::new(state);
 
                                 let state = self.state.clone();
-                                let ping_state = state.clone();
-
-                                let connected = self.connected.clone();
+                                let connect_status = self.connect_status.clone();
                                 let keep_alive_duration = self.options.keep_alive();
 
                                 tokio::spawn(async move {
+                                    let exit = Arc::new(AtomicBool::new(false));
                                     let (msg_tx, msg_rx) = mpsc::channel(8);
-                                    let mut read_task = tokio::spawn(async move {
-                                        read_from_server(network.frame_reader, msg_tx).await;
-                                    });
+
+                                    let ping_state = state.clone();
+                                    let exit_ping = exit.clone();
+
+                                    tokio::spawn(keep_alive(
+                                        keep_alive_duration,
+                                        ping_state,
+                                        exit_ping,
+                                    ));
+
+                                    let mut read_task = tokio::spawn(read_from_server(
+                                        network.frame_reader,
+                                        msg_tx,
+                                    ));
 
                                     let mut write_task = tokio::spawn(async move {
                                         if let Err(err) = write_to_server(
@@ -184,24 +307,21 @@ impl Client for TcpClient {
                                         }
                                     });
 
-                                    let exit = Arc::new(AtomicBool::new(false));
-                                    let exit_ping = exit.clone();
-
-                                    tokio::spawn(async move {
-                                        keep_alive(keep_alive_duration, ping_state, exit_ping)
-                                            .await;
-                                    });
-
                                     if tokio::try_join!(&mut read_task, &mut write_task).is_err() {
-                                        log::error!("read_task/write_task terminated");
+                                        log::error!("read_task/write_task terminated.");
                                         read_task.abort();
                                     };
 
-                                    connected.store(false, Ordering::SeqCst);
+                                    let mut connect_status = connect_status.lock();
+                                    *connect_status = ConnectStatus::Disconnected;
                                     exit.store(true, Ordering::SeqCst);
                                 });
 
-                                self.connected.store(true, Ordering::SeqCst);
+                                {
+                                    let status = self.connect_status.clone();
+                                    let mut status = status.lock();
+                                    *status = ConnectStatus::Connected;
+                                }
 
                                 if p.connack_flags().session_present {
                                     token.set_session_present();
@@ -211,16 +331,24 @@ impl Client for TcpClient {
                             }
                             code => {
                                 token.set_return_code(code);
+                                self.set_connect_status(ConnectStatus::Disconnected);
                                 token.set_error(MqttError::MqttConnectFailed(code.to_u8()))
                             }
                         }
                     } else {
+                        self.set_connect_status(ConnectStatus::Disconnected);
                         token.set_error(MqttError::ProtocolError)
                     }
                 }
-                Err(e) => token.set_error(MqttError::VariablePacketError(e)),
+                Err(e) => {
+                    self.set_connect_status(ConnectStatus::Disconnected);
+                    token.set_error(MqttError::VariablePacketError(e))
+                }
             },
-            None => token.set_error(MqttError::MqttConnectFailed(0)),
+            None => {
+                self.set_connect_status(ConnectStatus::Disconnected);
+                token.set_error(MqttError::MqttConnectFailed(0))
+            }
         }
 
         token
@@ -229,16 +357,16 @@ impl Client for TcpClient {
     async fn disconnect(&mut self) -> DisconnectToken {
         let mut token = DisconnectToken::default();
 
-        log::debug!("start disconnect");
+        log::debug!("start disconnect.");
 
-        if !self.connected.load(Ordering::SeqCst) {
+        if !self.is_connected() {
             token.set_error(MqttError::ConnectionLost);
             return token;
         }
 
         let packet = DisconnectPacket::new().into();
 
-        log::debug!("send disconnect packet");
+        log::debug!("send disconnect packet.");
         if self
             .state
             .outgoing_tx
@@ -271,9 +399,9 @@ impl Client for TcpClient {
         let mut token = PublishToken::default();
         token.set_qos(qos);
 
-        log::debug!("start publish");
+        log::debug!("start publish.");
 
-        if !self.connected.load(Ordering::SeqCst) {
+        if !self.is_connected() {
             token.set_error(MqttError::ConnectionLost);
             return token;
         }
@@ -319,7 +447,7 @@ impl Client for TcpClient {
 
         let packet = packet.into();
 
-        log::debug!("send publish packet");
+        log::debug!("send publish packet.");
         if self
             .state
             .outgoing_tx
@@ -346,14 +474,28 @@ impl Client for TcpClient {
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
 
-        log::debug!("start subscribe");
+        log::debug!("start subscribe.");
 
-        if !self.connected.load(Ordering::SeqCst) {
+        if !self.is_connected() {
             token.set_error(MqttError::ConnectionLost);
             return token;
         }
 
         let topic: String = topic.into();
+
+        let matched = self.state.topic_manager.match_topic(topic.to_owned());
+        if !matched.is_empty() {
+            let mut topics = vec![];
+            for subscription in matched {
+                topics.push(subscription.topic);
+            }
+            let s: String = topics.join(", ");
+            log::warn!(
+                "the current topic [{}] conflicts with the existing subscribed topic [{}].",
+                topic,
+                s
+            )
+        }
 
         let pkid;
         {
@@ -378,7 +520,7 @@ impl Client for TcpClient {
 
         let packet = SubscribePacket::new(pkid, subscribes).into();
 
-        log::debug!("send subscribe packet");
+        log::debug!("send subscribe packet.");
         if self
             .state
             .outgoing_tx
@@ -395,7 +537,7 @@ impl Client for TcpClient {
         }
 
         // add subscriptions after send packet to outgoing
-        token.add_subscriptions(vec![(topic.to_owned(), callback)]);
+        token.add_subscriptions(vec![(topic.to_owned(), qos, callback)]);
 
         token
     }
@@ -407,9 +549,9 @@ impl Client for TcpClient {
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
 
-        log::debug!("start subscribe");
+        log::debug!("start subscribe.");
 
-        if !self.connected.load(Ordering::SeqCst) {
+        if !self.is_connected() {
             token.set_error(MqttError::ConnectionLost);
             return token;
         }
@@ -441,12 +583,12 @@ impl Client for TcpClient {
 
             subscribes.push((topic_filter, qos));
 
-            subscriptions.push((topic, callback));
+            subscriptions.push((topic, qos, callback));
         }
 
         let packet = SubscribePacket::new(pkid, subscribes).into();
 
-        log::debug!("send subscribe packet");
+        log::debug!("send subscribe packet.");
         if self
             .state
             .outgoing_tx
@@ -471,9 +613,9 @@ impl Client for TcpClient {
     async fn unsubscribe<S: Into<String> + Send>(&mut self, topics: Vec<S>) -> UnsubscribeToken {
         let mut token = UnsubscribeToken::default();
 
-        log::debug!("start unsubscribe");
+        log::debug!("start unsubscribe.");
 
-        if !self.connected.load(Ordering::SeqCst) {
+        if !self.is_connected() {
             token.set_error(MqttError::ConnectionLost);
             return token;
         }
@@ -531,7 +673,6 @@ mod test {
     use std::env;
 
     use mqtt_codec_kit::common::QualityOfService;
-    use tokio::signal;
 
     use crate::{client::Client, message::Message};
 
@@ -602,6 +743,6 @@ mod test {
             println!("{:#?}", err.unwrap());
         }
 
-        signal::ctrl_c().await.expect("ctrl c failed");
+        cli.block().await;
     }
 }

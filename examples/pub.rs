@@ -6,7 +6,8 @@ async fn main() {
     let mut options = ClientOptions::new();
     options
         .set_server("localhost:1883")
-        .set_client_id("simple-client");
+        .set_client_id("simple-client")
+        .set_auto_reconnect(false);
 
     let mut cli = TcpClient::new(options);
 
@@ -26,4 +27,6 @@ async fn main() {
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
+
+    cli.block().await
 }

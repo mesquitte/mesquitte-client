@@ -10,6 +10,8 @@ pub(crate) enum MqttError {
     MqttConnectFailed(u8),
     #[error("Connection Lost")]
     ConnectionLost,
+    #[error("Reconnecting")]
+    Reconnecting,
     #[error("Protocol Error")]
     ProtocolError,
     #[error("Invalid Topic")]
@@ -27,6 +29,7 @@ pub enum TokenError {
     IOError(String),
     ConnectTimeout,
     NotConnected,
+    Reconnecting,
     MqttConnectFailed(u8),
     ConnectionLost,
     InvalidTopic,
@@ -43,6 +46,7 @@ impl From<&MqttError> for TokenError {
             MqttError::NetworkUnreachable => TokenError::NotConnected,
             MqttError::MqttConnectFailed(n) => TokenError::MqttConnectFailed(*n),
             MqttError::ConnectionLost => TokenError::ConnectionLost,
+            MqttError::Reconnecting => TokenError::Reconnecting,
             MqttError::ProtocolError => TokenError::PacketError("Protocol Error".to_string()),
             MqttError::InvalidTopic => TokenError::InvalidTopic,
             MqttError::PacketIdError => TokenError::PacketIdError,

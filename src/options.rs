@@ -15,6 +15,9 @@ pub struct ClientOptions {
     will_retained: bool,
     keep_alive: Duration,
     connect_timeout: Duration,
+    auto_reconnect: bool,
+    connect_retry_interval: Duration,
+    max_connect_retry_times: Option<u16>,
 }
 
 impl Default for ClientOptions {
@@ -32,6 +35,9 @@ impl Default for ClientOptions {
             will_retained: Default::default(),
             keep_alive: Default::default(),
             connect_timeout: Default::default(),
+            auto_reconnect: Default::default(),
+            connect_retry_interval: Default::default(),
+            max_connect_retry_times: Default::default(),
         }
     }
 }
@@ -41,6 +47,7 @@ impl ClientOptions {
         Self {
             keep_alive: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(10),
+            connect_retry_interval: Duration::from_secs(5),
             ..Default::default()
         }
     }
@@ -100,6 +107,21 @@ impl ClientOptions {
         self
     }
 
+    pub fn set_auto_reconnect(&mut self, flag: bool) -> &mut Self {
+        self.auto_reconnect = flag;
+        self
+    }
+
+    pub fn set_connect_retry_interval(&mut self, interval: Duration) -> &mut Self {
+        self.connect_retry_interval = interval;
+        self
+    }
+
+    pub fn set_max_connect_retry_times(&mut self, times: Option<u16>) -> &mut Self {
+        self.max_connect_retry_times = times;
+        self
+    }
+
     pub fn server(&self) -> &String {
         &self.server
     }
@@ -146,5 +168,17 @@ impl ClientOptions {
 
     pub fn connect_timeout(&self) -> Duration {
         self.connect_timeout
+    }
+
+    pub fn auto_reconnect(&self) -> bool {
+        self.auto_reconnect
+    }
+
+    pub fn connect_retry_interval(&self) -> Duration {
+        self.connect_retry_interval
+    }
+
+    pub fn max_connect_retry_times(&self) -> Option<u16> {
+        self.max_connect_retry_times
     }
 }

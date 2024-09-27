@@ -1,8 +1,7 @@
-use std::env;
+use std::{env, time::Duration};
 
 use mesquitte_client::{client::TcpClient, message::Message, options::ClientOptions, Client};
 use mqtt_codec_kit::common::QualityOfService;
-use tokio::signal;
 
 fn handler1(msg: &Message) {
     log::info!(
@@ -34,7 +33,10 @@ async fn main() {
     let mut options = ClientOptions::new();
     options
         .set_server("localhost:1883")
-        .set_client_id("simple-client");
+        .set_client_id("simple-client")
+        .set_keep_alive(Duration::from_secs(10))
+        .set_auto_reconnect(true)
+        .set_connect_retry_interval(Duration::from_secs(10));
 
     let mut cli = TcpClient::new(options);
 
@@ -53,12 +55,20 @@ async fn main() {
     }
 
     let token = cli
-        .subscribe("b/#", QualityOfService::Level0, handler2)
+        .subscribe("a/b", QualityOfService::Level1, handler1)
         .await;
     let err = token.await;
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
 
-    signal::ctrl_c().await.expect("ctrl c failed");
+    let token = cli
+        .subscribe("b/#", QualityOfService::Level1, handler2)
+        .await;
+    let err = token.await;
+    if err.is_some() {
+        println!("{:#?}", err.unwrap());
+    }
+
+    cli.block().await;
 }

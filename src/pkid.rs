@@ -5,6 +5,7 @@ use crate::{error::MqttError, token::Token};
 pub const PKID_MAX: u16 = 65535;
 const PKID_MIN: u16 = 1;
 
+#[derive(Clone)]
 pub struct PacketIds {
     index: HashMap<u16, Token>,
     last_issued_id: u16,

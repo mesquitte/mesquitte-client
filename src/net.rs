@@ -28,6 +28,7 @@ use crate::{
     message::Message,
     state::State,
     token::{PacketAndToken, Token, Tokenize},
+    topic_store::Subscription,
 };
 
 pub async fn read_from_server<R, D>(
@@ -37,11 +38,11 @@ pub async fn read_from_server<R, D>(
     R: AsyncRead + Unpin,
     D: Decoder<Item = VariablePacket, Error = VariablePacketError>,
 {
-    log::info!("start read loop");
+    log::info!("start read loop.");
     loop {
         match reader.next().await {
             None => {
-                log::info!("connection closed");
+                log::info!("connection closed.");
                 break;
             }
             Some(Err(e)) => {
@@ -57,7 +58,7 @@ pub async fn read_from_server<R, D>(
             }
         }
     }
-    log::info!("read loop exited");
+    log::info!("read loop exited.");
 }
 
 pub async fn write_to_server<W, E>(
@@ -129,6 +130,11 @@ where
                             log::error!("write to server {}", err);
                             break;
                         }
+
+                        {
+                            let mut last_sent_packet_at = state.last_sent_packet_at.lock();
+                            *last_sent_packet_at = Instant::now();
+                        }
                     }
                     None => {
                         log::warn!("incoming receive channel closed");
@@ -177,12 +183,13 @@ where
             }
         }
     }
-    log::info!("write loop exited");
+    log::info!("write loop exited.");
 
     Ok(())
 }
 
 pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicBool>) {
+    log::info!("start keep_alive loop.");
     while !exit.load(Ordering::SeqCst) {
         let elapsed;
         {
@@ -193,7 +200,7 @@ pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicB
 
         if elapsed >= duration {
             let packet = PingreqPacket::new().into();
-            log::debug!("send pingreq packet");
+            log::debug!("send pingreq packet.");
             if state
                 .outgoing_tx
                 .clone()
@@ -213,7 +220,7 @@ pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicB
 
         sleep(duration).await;
     }
-    log::info!("keep_alive loop exited");
+    log::info!("keep_alive loop exited.");
 }
 
 async fn handle_publish(
@@ -222,20 +229,20 @@ async fn handle_publish(
 ) -> Result<Option<VariablePacket>, MqttError> {
     let (qos, pkid) = packet.qos().split();
 
-    let handlers = &state
+    let subscriptions = &state
         .topic_manager
         .match_topic(packet.topic_name().to_string());
 
     match qos {
         QualityOfService::Level0 => {
             // process message via callback
-            let packet: Message = packet.into();
+            let msg: Message = packet.into();
 
-            for handler in handlers {
-                let handler = *handler;
-                let packet = packet.clone();
+            for subscription in subscriptions {
+                let subscription = subscription.clone();
+                let packet = msg.clone();
                 tokio::spawn(async move {
-                    handler(&packet);
+                    (subscription.handler)(&packet);
                 });
             }
 
@@ -243,13 +250,13 @@ async fn handle_publish(
         }
         QualityOfService::Level1 => {
             // process message via callback
-            let packet: Message = packet.into();
+            let msg: Message = packet.into();
 
-            for handler in handlers {
-                let handler = *handler;
-                let packet = packet.clone();
+            for subscription in subscriptions {
+                let subscription = subscription.clone();
+                let packet = msg.clone();
                 tokio::spawn(async move {
-                    handler(&packet);
+                    (subscription.handler)(&packet);
                 });
             }
 
@@ -294,10 +301,10 @@ async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
 
             // process message via callback
             for handler in handlers {
-                let handler = *handler;
+                let subscription = handler.clone();
                 let msg = msg.clone();
                 tokio::spawn(async move {
-                    handler(&msg);
+                    (subscription.handler)(&msg);
                 });
             }
         }
@@ -322,13 +329,17 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
     let pkid = packet.packet_identifier();
 
     if let Some(Token::Subscribe(token)) = pkids.get_token(pkid) {
+        let mut subscriptions = state.subscriptions.lock();
         for (i, code) in packet.subscribes().iter().enumerate() {
             let topic = token.set_result(i, *code);
 
-            let callback = token.get_handler(topic.to_owned()).unwrap();
+            let (qos, callback) = token.get_handler(topic.to_owned()).unwrap();
+
+            let subscription = Subscription::new(topic.to_owned(), qos, callback);
 
             if *code != SubscribeReturnCode::Failure {
-                state.topic_manager.add((topic, callback));
+                state.topic_manager.add(subscription.clone());
+                subscriptions.push(subscription);
             }
         }
 

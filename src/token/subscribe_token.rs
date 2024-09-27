@@ -2,7 +2,7 @@ use std::{collections::HashMap, future::Future, sync::Arc, task::Poll};
 
 use parking_lot::Mutex;
 
-use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
+use mqtt_codec_kit::{common::QualityOfService, v4::packet::suback::SubscribeReturnCode};
 
 use crate::{
     enable_future, enable_tokenize,
@@ -15,7 +15,7 @@ use super::{State, Tokenize};
 #[derive(Default)]
 struct InnerToken {
     topics: Vec<String>,
-    handlers: HashMap<String, OnMessageArrivedHandler>,
+    handlers: HashMap<String, (QualityOfService, OnMessageArrivedHandler)>,
     results: HashMap<String, SubscribeReturnCode>,
 
     state: State,
@@ -30,19 +30,22 @@ pub struct SubscribeToken {
 impl SubscribeToken {
     pub(crate) fn add_subscriptions<S: Into<String>>(
         &mut self,
-        subscriptions: Vec<(S, OnMessageArrivedHandler)>,
+        subscriptions: Vec<(S, QualityOfService, OnMessageArrivedHandler)>,
     ) {
         let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
-        for (topic, handler) in subscriptions {
+        for (topic, qos, handler) in subscriptions {
             let topic: String = topic.into();
             inner.topics.push(topic.to_owned());
-            inner.handlers.insert(topic.to_owned(), handler);
+            inner.handlers.insert(topic.to_owned(), (qos, handler));
         }
     }
 
-    pub(crate) fn get_handler<S: Into<String>>(&self, topic: S) -> Option<OnMessageArrivedHandler> {
+    pub(crate) fn get_handler<S: Into<String>>(
+        &self,
+        topic: S,
+    ) -> Option<(QualityOfService, OnMessageArrivedHandler)> {
         let inner = self.inner.lock();
         let inner = &*inner;
 

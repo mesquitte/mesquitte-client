@@ -11,7 +11,7 @@ use crate::{
 
 use super::{State, Tokenize};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ConnectToken {
     inner: Arc<Mutex<InnerToken>>,
 }
