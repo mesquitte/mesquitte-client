@@ -5,8 +5,8 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::{common::QualityOfService, v4::packet::suback::SubscribeReturnCode};
 
 use crate::{
-    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
+    impl_future, impl_tokenize,
     topic_store::OnMessageArrivedHandler,
 };
 
@@ -75,6 +75,6 @@ impl SubscribeToken {
     }
 }
 
-enable_future!(SubscribeToken);
+impl_future!(SubscribeToken);
 
-enable_tokenize!(SubscribeToken);
+impl_tokenize!(SubscribeToken);

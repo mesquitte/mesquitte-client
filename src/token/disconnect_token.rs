@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc, task::Poll};
 use parking_lot::Mutex;
 
 use crate::{
-    enable_future, enable_tokenize,
+    impl_future, impl_tokenize,
     error::{MqttError, TokenError},
 };
 
@@ -20,6 +20,6 @@ pub struct DisconnectToken {
     inner: Arc<Mutex<InnerToken>>,
 }
 
-enable_future!(DisconnectToken);
+impl_future!(DisconnectToken);
 
-enable_tokenize!(DisconnectToken);
+impl_tokenize!(DisconnectToken);

@@ -79,7 +79,7 @@ struct State {
 }
 
 #[macro_export]
-macro_rules! enable_future {
+macro_rules! impl_future {
     ($typ:ident) => {
         impl Future for $typ {
             type Output = Option<TokenError>;
@@ -104,7 +104,7 @@ macro_rules! enable_future {
 }
 
 #[macro_export]
-macro_rules! enable_tokenize {
+macro_rules! impl_tokenize {
     ($typ:ident) => {
         impl Tokenize for $typ {
             fn set_error(&mut self, error: MqttError) {

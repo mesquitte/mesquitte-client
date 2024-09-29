@@ -79,6 +79,8 @@ pub struct TcpClient {
     state: Arc<State>,
     connect_status: Arc<Mutex<ConnectStatus>>,
     notify: Arc<Notify>,
+
+    manual_disconnect: Arc<AtomicBool>,
 }
 
 impl TcpClient {
@@ -88,6 +90,8 @@ impl TcpClient {
             state: Arc::new(State::new()),
             connect_status: Arc::new(Mutex::new(ConnectStatus::Disconnected)),
             notify: Arc::new(Notify::new()),
+
+            manual_disconnect: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -147,11 +151,15 @@ impl TcpClient {
                     match self.connect_status() {
                         ConnectStatus::Connected => continue,
                         ConnectStatus::Disconnected => {
-                            if self.options.auto_reconnect() {
-                                self.notify.notify_one();
+                            if !self.manual_disconnect.load(Ordering::SeqCst) {
+                                if self.options.auto_reconnect() {
+                                    self.notify.notify_one();
+                                } else {
+                                    log::info!("client disconnect, program exit.");
+                                    return;
+                                }
                             } else {
-                                log::info!("client disconnect, program exit.");
-                                return;
+                                continue;
                             }
                         },
                         ConnectStatus::Connecting => continue,
@@ -322,6 +330,7 @@ impl Client for TcpClient {
                                     let mut status = status.lock();
                                     *status = ConnectStatus::Connected;
                                 }
+                                self.manual_disconnect.store(false, Ordering::SeqCst);
 
                                 if p.connack_flags().session_present {
                                     token.set_session_present();
@@ -365,6 +374,8 @@ impl Client for TcpClient {
         }
 
         let packet = DisconnectPacket::new().into();
+
+        self.manual_disconnect.store(true, Ordering::SeqCst);
 
         log::debug!("send disconnect packet.");
         if self

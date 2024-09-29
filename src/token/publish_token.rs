@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::common::QualityOfService;
 
 use crate::{
-    enable_future, enable_tokenize,
+    impl_future, impl_tokenize,
     error::{MqttError, TokenError},
 };
 
@@ -49,6 +49,6 @@ impl PublishToken {
     }
 }
 
-enable_future!(PublishToken);
+impl_future!(PublishToken);
 
-enable_tokenize!(PublishToken);
+impl_tokenize!(PublishToken);

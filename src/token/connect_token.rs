@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use mqtt_codec_kit::v4::control::ConnectReturnCode;
 
 use crate::{
-    enable_future, enable_tokenize,
+    impl_future, impl_tokenize,
     error::{MqttError, TokenError},
 };
 
@@ -65,6 +65,6 @@ impl ConnectToken {
     }
 }
 
-enable_future!(ConnectToken);
+impl_future!(ConnectToken);
 
-enable_tokenize!(ConnectToken);
+impl_tokenize!(ConnectToken);

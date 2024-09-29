@@ -3,8 +3,8 @@ use std::{future::Future, sync::Arc, task::Poll};
 use parking_lot::Mutex;
 
 use crate::{
-    enable_future, enable_tokenize,
     error::{MqttError, TokenError},
+    impl_future, impl_tokenize,
 };
 
 use super::{State, Tokenize};
@@ -38,6 +38,6 @@ impl UnsubscribeToken {
     }
 }
 
-enable_future!(UnsubscribeToken);
+impl_future!(UnsubscribeToken);
 
-enable_tokenize!(UnsubscribeToken);
+impl_tokenize!(UnsubscribeToken);
