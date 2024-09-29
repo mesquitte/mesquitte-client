@@ -2,20 +2,19 @@ use std::{collections::HashMap, future::Future, sync::Arc, task::Poll};
 
 use parking_lot::Mutex;
 
-use mqtt_codec_kit::{common::QualityOfService, v4::packet::suback::SubscribeReturnCode};
+use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
 
 use crate::{
     error::{MqttError, TokenError},
     impl_future, impl_tokenize,
-    topic_store::OnMessageArrivedHandler,
+    topic_store::Subscription,
 };
 
 use super::{State, Tokenize};
 
 #[derive(Default)]
 struct InnerToken {
-    topics: Vec<String>,
-    handlers: HashMap<String, (QualityOfService, OnMessageArrivedHandler)>,
+    subscriptions: Vec<Subscription>,
     results: HashMap<String, SubscribeReturnCode>,
 
     state: State,
@@ -28,43 +27,27 @@ pub struct SubscribeToken {
 }
 
 impl SubscribeToken {
-    pub(crate) fn add_subscriptions<S: Into<String>>(
-        &mut self,
-        subscriptions: Vec<(S, QualityOfService, OnMessageArrivedHandler)>,
-    ) {
+    pub(crate) fn add_subscriptions(&mut self, subscriptions: Vec<Subscription>) {
         let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
-        for (topic, qos, handler) in subscriptions {
-            let topic: String = topic.into();
-            inner.topics.push(topic.to_owned());
-            inner.handlers.insert(topic.to_owned(), (qos, handler));
-        }
+        inner.subscriptions.extend(subscriptions);
     }
 
-    pub(crate) fn get_handler<S: Into<String>>(
-        &self,
-        topic: S,
-    ) -> Option<(QualityOfService, OnMessageArrivedHandler)> {
+    pub(crate) fn get_subscription(&self, index: usize) -> Option<Subscription> {
         let inner = self.inner.lock();
         let inner = &*inner;
 
-        inner.handlers.get(&topic.into()).copied()
+        inner.subscriptions.get(index).cloned()
     }
 
-    pub(crate) fn set_result(&mut self, index: usize, result: SubscribeReturnCode) -> String {
+    pub(crate) fn set_result(&mut self, index: usize, result: SubscribeReturnCode) {
         let mut inner = self.inner.lock();
         let inner = &mut *inner;
 
-        let mut return_topic = String::new();
-
-        if let Some(topic) = inner.topics.get(index) {
-            if inner.topics.contains(topic) {
-                inner.results.insert(topic.to_owned(), result);
-                return_topic = topic.to_string();
-            }
+        if let Some(subscription) = inner.subscriptions.get(index) {
+            inner.results.insert(subscription.topic.to_owned(), result);
         }
-        return_topic
     }
 
     pub fn result(&self) -> HashMap<String, SubscribeReturnCode> {

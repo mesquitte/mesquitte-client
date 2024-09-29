@@ -28,7 +28,6 @@ use crate::{
     message::Message,
     state::State,
     token::{PacketAndToken, Token, Tokenize},
-    topic_store::Subscription,
 };
 
 pub async fn read_from_server<R, D>(
@@ -235,28 +234,28 @@ async fn handle_publish(
 
     match qos {
         QualityOfService::Level0 => {
-            // process message via callback
             let msg: Message = packet.into();
 
             for subscription in subscriptions {
                 let subscription = subscription.clone();
-                let packet = msg.clone();
+                let msg = msg.clone();
+
                 tokio::spawn(async move {
-                    (subscription.handler)(&packet);
+                    (subscription.handler)(&msg);
                 });
             }
 
             Ok(None)
         }
         QualityOfService::Level1 => {
-            // process message via callback
             let msg: Message = packet.into();
 
             for subscription in subscriptions {
                 let subscription = subscription.clone();
-                let packet = msg.clone();
+                let msg = msg.clone();
+
                 tokio::spawn(async move {
-                    (subscription.handler)(&packet);
+                    (subscription.handler)(&msg);
                 });
             }
 
@@ -293,16 +292,16 @@ async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
 
     match packet {
         Some(packet) => {
-            let handlers = &state
+            let subscriptions = &state
                 .topic_manager
                 .match_topic(packet.topic_name().to_string());
 
             let msg = Message::from(&packet);
 
-            // process message via callback
-            for handler in handlers {
-                let subscription = handler.clone();
+            for subscription in subscriptions {
+                let subscription = subscription.clone();
                 let msg = msg.clone();
+
                 tokio::spawn(async move {
                     (subscription.handler)(&msg);
                 });
@@ -330,16 +329,18 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
 
     if let Some(Token::Subscribe(token)) = pkids.get_token(pkid) {
         let mut subscriptions = state.subscriptions.lock();
+
         for (i, code) in packet.subscribes().iter().enumerate() {
-            let topic = token.set_result(i, *code);
+            token.set_result(i, *code);
 
-            let (qos, callback) = token.get_handler(topic.to_owned()).unwrap();
-
-            let subscription = Subscription::new(topic.to_owned(), qos, callback);
-
-            if *code != SubscribeReturnCode::Failure {
-                state.topic_manager.add(subscription.clone());
-                subscriptions.push(subscription);
+            match token.get_subscription(i) {
+                Some(subscription) => {
+                    if *code != SubscribeReturnCode::Failure {
+                        state.topic_manager.add(subscription.clone());
+                        subscriptions.insert(subscription.topic.to_owned(), subscription);
+                    }
+                }
+                None => log::warn!("subscription {} not found.", i),
             }
         }
 

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use moka::future::Cache;
 use parking_lot::Mutex;
@@ -16,7 +16,7 @@ use crate::{
 pub struct State {
     pub packet_ids: Mutex<PacketIds>,
     pub topic_manager: TopicManager,
-    pub subscriptions: Mutex<Vec<Subscription>>,
+    pub subscriptions: Mutex<BTreeMap<String, Subscription>>,
     pub pending_packets: Cache<u16, PublishPacket>,
     pub outgoing_tx: Option<mpsc::Sender<PacketAndToken>>,
     pub last_sent_packet_at: Mutex<Instant>,
@@ -27,7 +27,7 @@ impl State {
         Self {
             packet_ids: Mutex::new(PacketIds::new()),
             topic_manager: TopicManager::new(),
-            subscriptions: Mutex::new(Vec::new()),
+            subscriptions: Mutex::new(BTreeMap::new()),
             pending_packets: Cache::builder()
                 .time_to_live(Duration::from_secs(60))
                 .max_capacity(pkid::PKID_MAX.into())

@@ -40,7 +40,7 @@ use crate::{
         ConnectToken, DisconnectToken, PacketAndToken, PublishToken, SubscribeToken, Token,
         Tokenize, UnsubscribeToken,
     },
-    topic_store::OnMessageArrivedHandler,
+    topic_store::{OnMessageArrivedHandler, Subscription},
     Client,
 };
 
@@ -192,12 +192,12 @@ impl TcpClient {
                         }
                         self.state.topic_manager.clear();
 
-                        for sub in subs {
-                            let token = self.subscribe(sub.topic.to_owned(), sub.qos, sub.handler).await;
+                        for (topic, sub) in subs {
+                            let token = self.subscribe(topic.to_owned(), sub.qos, sub.handler).await;
                             if token.await.is_none() {
-                                log::info!("resubscribe topic {} success.", sub.topic);
+                                log::info!("resubscribe topic {} success.", topic);
                             } else {
-                                log::error!("resubscribe topic {} failed.", sub.topic);
+                                log::error!("resubscribe topic {} failed.", topic);
                             }
                         }
                     }
@@ -548,7 +548,7 @@ impl Client for TcpClient {
         }
 
         // add subscriptions after send packet to outgoing
-        token.add_subscriptions(vec![(topic.to_owned(), qos, callback)]);
+        token.add_subscriptions(vec![Subscription::new(topic, qos, callback)]);
 
         token
     }
@@ -593,8 +593,7 @@ impl Client for TcpClient {
             };
 
             subscribes.push((topic_filter, qos));
-
-            subscriptions.push((topic, qos, callback));
+            subscriptions.push(Subscription::new(topic, qos, callback));
         }
 
         let packet = SubscribePacket::new(pkid, subscribes).into();
