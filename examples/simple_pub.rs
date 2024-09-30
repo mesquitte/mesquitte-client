@@ -1,15 +1,17 @@
-use mesquitte_client::{client::TcpClient, options::ClientOptions, Client};
+use mesquitte_client::{client::MqttClient, options::ClientOptions, transport, Client};
 use mqtt_codec_kit::common::QualityOfService;
 
 #[tokio::main]
 async fn main() {
+    let transport = transport::Tcp {};
+
     let mut options = ClientOptions::new();
     options
         .set_server("localhost:1883")
-        .set_client_id("simple-client")
+        .set_client_id("tcp-pub-client")
         .set_auto_reconnect(false);
 
-    let mut cli = TcpClient::new(options);
+    let mut cli = MqttClient::new(options, transport);
 
     let token = cli.connect().await;
     let err = token.await;

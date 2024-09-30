@@ -1,6 +1,8 @@
 use std::{env, time::Duration};
 
-use mesquitte_client::{client::TcpClient, message::Message, options::ClientOptions, Client};
+use mesquitte_client::{
+    client::MqttClient, message::Message, options::ClientOptions, transport, Client,
+};
 use mqtt_codec_kit::common::QualityOfService;
 
 fn handler1(msg: &Message) {
@@ -30,15 +32,17 @@ async fn main() {
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
+    let transport = transport::Tcp {};
+
     let mut options = ClientOptions::new();
     options
         .set_server("localhost:1883")
-        .set_client_id("simple-client")
+        .set_client_id("tcp-sub-client")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
 
-    let mut cli = TcpClient::new(options);
+    let mut cli = MqttClient::new(options, transport);
 
     let token = cli.connect().await;
     let err = token.await;

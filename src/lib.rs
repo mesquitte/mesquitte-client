@@ -14,6 +14,8 @@ mod state;
 pub mod token;
 mod topic_store;
 mod topic_trie;
+pub mod transport;
+mod ws_stream;
 
 pub trait Client {
     fn connect(&mut self) -> impl Future<Output = token::ConnectToken> + Send;

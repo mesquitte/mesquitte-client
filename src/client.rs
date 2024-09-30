@@ -1,32 +1,22 @@
 use futures::{SinkExt, StreamExt};
-use std::{
-    net::SocketAddr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 use parking_lot::Mutex;
 use tokio::{
-    net::{
-        lookup_host,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
     sync::{mpsc, Notify},
-    time::{self, timeout},
+    time::{self},
 };
-use tokio_util::codec::{FramedRead, FramedWrite};
 
 use mqtt_codec_kit::{
     common::{qos::QoSWithPacketIdentifier, QualityOfService, TopicFilter, TopicName},
     v4::{
         control::ConnectReturnCode,
         packet::{
-            connect::LastWill, ConnectPacket, DisconnectPacket, MqttDecoder, MqttEncoder,
-            PublishPacket, SubscribePacket, UnsubscribePacket, VariablePacket,
+            connect::LastWill, ConnectPacket, DisconnectPacket, PublishPacket, SubscribePacket,
+            UnsubscribePacket, VariablePacket,
         },
     },
 };
@@ -41,6 +31,7 @@ use crate::{
         Tokenize, UnsubscribeToken,
     },
     topic_store::{OnMessageArrivedHandler, Subscription},
+    transport::Transport,
     Client,
 };
 
@@ -51,45 +42,24 @@ enum ConnectStatus {
     Connecting,
 }
 
-struct Network {
-    pub frame_reader: FramedRead<OwnedReadHalf, MqttDecoder>,
-    pub frame_writer: FramedWrite<OwnedWriteHalf, MqttEncoder>,
-}
-
-impl Network {
-    async fn connect(addr: SocketAddr, connect_timeout: Duration) -> Result<Self, MqttError> {
-        match timeout(connect_timeout, TcpStream::connect(addr)).await {
-            Ok(res) => match res {
-                Ok(s) => {
-                    let (rd, wr) = s.into_split();
-                    Ok(Self {
-                        frame_reader: FramedRead::new(rd, MqttDecoder::new()),
-                        frame_writer: FramedWrite::new(wr, MqttEncoder::new()),
-                    })
-                }
-                Err(e) => Err(MqttError::IOError(e)),
-            },
-            Err(_) => Err(MqttError::ConnectTimeout),
-        }
-    }
-}
-
-pub struct TcpClient {
+pub struct MqttClient<T: Transport + Send> {
     options: ClientOptions,
     state: Arc<State>,
     connect_status: Arc<Mutex<ConnectStatus>>,
     notify: Arc<Notify>,
+    transport: T,
 
     manual_disconnect: Arc<AtomicBool>,
 }
 
-impl TcpClient {
-    pub fn new(options: ClientOptions) -> Self {
+impl<T: Transport + Send> MqttClient<T> {
+    pub fn new(options: ClientOptions, transport: T) -> Self {
         Self {
             options,
             state: Arc::new(State::new()),
             connect_status: Arc::new(Mutex::new(ConnectStatus::Disconnected)),
             notify: Arc::new(Notify::new()),
+            transport,
 
             manual_disconnect: Arc::new(AtomicBool::new(false)),
         }
@@ -207,7 +177,7 @@ impl TcpClient {
     }
 }
 
-impl Client for TcpClient {
+impl<T: Transport + Send> Client for MqttClient<T> {
     async fn connect(&mut self) -> ConnectToken {
         let mut token = ConnectToken::default();
 
@@ -223,140 +193,132 @@ impl Client for TcpClient {
             }
         }
 
-        let addrs = lookup_host(self.options.server()).await.unwrap();
+        let network = self
+            .transport
+            .connect(
+                self.options.server().to_string(),
+                self.options.connect_timeout(),
+            )
+            .await;
 
-        let mut network: Option<Network> = None;
-        let mut connect_error = MqttError::NetworkUnreachable;
+        match network {
+            Ok((mut frame_reader, mut frame_writer)) => {
+                let packet: VariablePacket = self.build_connect_packet().into();
 
-        for addr in addrs {
-            match Network::connect(addr, self.options.connect_timeout()).await {
-                Ok(n) => {
-                    network = Some(n);
-                    break;
-                }
-                Err(e) => {
-                    network = None;
-                    connect_error = e;
-                }
-            }
-        }
+                let _ = frame_writer.send(packet).await;
 
-        if network.is_none() {
-            self.set_connect_status(ConnectStatus::Disconnected);
-            token.set_error(connect_error);
-            return token;
-        }
+                match frame_reader.next().await {
+                    Some(packet) => match packet {
+                        Ok(packet) => {
+                            if let VariablePacket::ConnackPacket(p) = packet {
+                                match p.connect_return_code() {
+                                    ConnectReturnCode::ConnectionAccepted => {
+                                        let (outgoing_tx, outgoing_rx) = mpsc::channel(8);
 
-        let packet: VariablePacket = self.build_connect_packet().into();
+                                        let mut state = State::new();
 
-        let mut network = network.unwrap();
-
-        let _ = network.frame_writer.send(packet).await;
-
-        match network.frame_reader.next().await {
-            Some(packet) => match packet {
-                Ok(packet) => {
-                    if let VariablePacket::ConnackPacket(p) = packet {
-                        match p.connect_return_code() {
-                            ConnectReturnCode::ConnectionAccepted => {
-                                let (outgoing_tx, outgoing_rx) = mpsc::channel(8);
-
-                                let mut state = State::new();
-
-                                {
-                                    let packet_ids = self.state.packet_ids.lock();
-                                    state.packet_ids = (*packet_ids).clone().into();
-                                }
-
-                                {
-                                    let subscribes = self.state.subscriptions.lock();
-                                    state.subscriptions = (*subscribes).clone().into();
-                                }
-
-                                state.topic_manager = self.state.topic_manager.clone();
-                                state.pending_packets = self.state.pending_packets.clone();
-
-                                state.outgoing_tx = Some(outgoing_tx);
-
-                                self.state = Arc::new(state);
-
-                                let state = self.state.clone();
-                                let connect_status = self.connect_status.clone();
-                                let keep_alive_duration = self.options.keep_alive();
-
-                                tokio::spawn(async move {
-                                    let exit = Arc::new(AtomicBool::new(false));
-                                    let (msg_tx, msg_rx) = mpsc::channel(8);
-
-                                    let ping_state = state.clone();
-                                    let exit_ping = exit.clone();
-
-                                    tokio::spawn(keep_alive(
-                                        keep_alive_duration,
-                                        ping_state,
-                                        exit_ping,
-                                    ));
-
-                                    let mut read_task = tokio::spawn(read_from_server(
-                                        network.frame_reader,
-                                        msg_tx,
-                                    ));
-
-                                    let mut write_task = tokio::spawn(async move {
-                                        if let Err(err) = write_to_server(
-                                            network.frame_writer,
-                                            msg_rx,
-                                            outgoing_rx,
-                                            state,
-                                        )
-                                        .await
                                         {
-                                            log::error!("write to server: {err}");
+                                            let packet_ids = self.state.packet_ids.lock();
+                                            state.packet_ids = (*packet_ids).clone().into();
                                         }
-                                    });
 
-                                    if tokio::try_join!(&mut read_task, &mut write_task).is_err() {
-                                        log::error!("read_task/write_task terminated.");
-                                        read_task.abort();
-                                    };
+                                        {
+                                            let subscribes = self.state.subscriptions.lock();
+                                            state.subscriptions = (*subscribes).clone().into();
+                                        }
 
-                                    let mut connect_status = connect_status.lock();
-                                    *connect_status = ConnectStatus::Disconnected;
-                                    exit.store(true, Ordering::SeqCst);
-                                });
+                                        state.topic_manager = self.state.topic_manager.clone();
+                                        state.pending_packets = self.state.pending_packets.clone();
 
-                                {
-                                    let status = self.connect_status.clone();
-                                    let mut status = status.lock();
-                                    *status = ConnectStatus::Connected;
+                                        state.outgoing_tx = Some(outgoing_tx);
+
+                                        self.state = Arc::new(state);
+
+                                        let state = self.state.clone();
+                                        let connect_status = self.connect_status.clone();
+                                        let keep_alive_duration = self.options.keep_alive();
+
+                                        tokio::spawn(async move {
+                                            let exit = Arc::new(AtomicBool::new(false));
+                                            let (msg_tx, msg_rx) = mpsc::channel(8);
+
+                                            let ping_state = state.clone();
+                                            let exit_ping = exit.clone();
+
+                                            tokio::spawn(keep_alive(
+                                                keep_alive_duration,
+                                                ping_state,
+                                                exit_ping,
+                                            ));
+
+                                            let mut read_task = tokio::spawn(read_from_server(
+                                                frame_reader,
+                                                msg_tx,
+                                            ));
+
+                                            let mut write_task = tokio::spawn(async move {
+                                                if let Err(err) = write_to_server(
+                                                    frame_writer,
+                                                    msg_rx,
+                                                    outgoing_rx,
+                                                    state,
+                                                )
+                                                .await
+                                                {
+                                                    log::error!("write to server: {err}");
+                                                }
+                                            });
+
+                                            if tokio::try_join!(&mut read_task, &mut write_task)
+                                                .is_err()
+                                            {
+                                                log::error!("read_task/write_task terminated.");
+                                                read_task.abort();
+                                            };
+
+                                            let mut connect_status = connect_status.lock();
+                                            *connect_status = ConnectStatus::Disconnected;
+                                            exit.store(true, Ordering::SeqCst);
+                                        });
+
+                                        {
+                                            let status = self.connect_status.clone();
+                                            let mut status = status.lock();
+                                            *status = ConnectStatus::Connected;
+                                        }
+                                        self.manual_disconnect.store(false, Ordering::SeqCst);
+
+                                        if p.connack_flags().session_present {
+                                            token.set_session_present();
+                                        }
+
+                                        token.flow_complete();
+                                    }
+                                    code => {
+                                        token.set_return_code(code);
+                                        self.set_connect_status(ConnectStatus::Disconnected);
+                                        token.set_error(MqttError::MqttConnectFailed(code.to_u8()))
+                                    }
                                 }
-                                self.manual_disconnect.store(false, Ordering::SeqCst);
-
-                                if p.connack_flags().session_present {
-                                    token.set_session_present();
-                                }
-
-                                token.flow_complete();
-                            }
-                            code => {
-                                token.set_return_code(code);
+                            } else {
                                 self.set_connect_status(ConnectStatus::Disconnected);
-                                token.set_error(MqttError::MqttConnectFailed(code.to_u8()))
+                                token.set_error(MqttError::ProtocolError)
                             }
                         }
-                    } else {
+                        Err(e) => {
+                            self.set_connect_status(ConnectStatus::Disconnected);
+                            token.set_error(MqttError::VariablePacketError(e))
+                        }
+                    },
+                    None => {
                         self.set_connect_status(ConnectStatus::Disconnected);
-                        token.set_error(MqttError::ProtocolError)
+                        token.set_error(MqttError::MqttConnectFailed(0))
                     }
                 }
-                Err(e) => {
-                    self.set_connect_status(ConnectStatus::Disconnected);
-                    token.set_error(MqttError::VariablePacketError(e))
-                }
-            },
-            None => {
+            }
+            Err(err) => {
                 self.set_connect_status(ConnectStatus::Disconnected);
-                token.set_error(MqttError::MqttConnectFailed(0))
+                token.set_error(err);
             }
         }
 
@@ -684,9 +646,9 @@ mod test {
 
     use mqtt_codec_kit::common::QualityOfService;
 
-    use crate::{client::Client, message::Message};
+    use crate::{client::Client, message::Message, transport};
 
-    use super::{ClientOptions, TcpClient};
+    use super::{ClientOptions, MqttClient};
 
     fn handler(msg: &Message) {
         log::debug!(
@@ -711,7 +673,9 @@ mod test {
             .set_username("qinxin")
             .set_password("111");
 
-        let mut cli = TcpClient::new(options);
+        let transport = transport::Tcp {};
+
+        let mut cli = MqttClient::new(options, transport);
 
         let token = cli.connect().await;
 
