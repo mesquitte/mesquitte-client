@@ -1,6 +1,6 @@
 use std::collections::{hash_map, HashMap};
 
-use crate::{error::MqttError, token::Token};
+use crate::token::{Token, TokenError};
 
 pub const PKID_MAX: u16 = 65535;
 const PKID_MIN: u16 = 1;
@@ -62,7 +62,7 @@ impl PacketIds {
 
     pub fn clean_up(&mut self) {
         for (_, token) in self.index.iter_mut() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
         }
         self.index.clear();
     }

@@ -4,18 +4,15 @@ use parking_lot::Mutex;
 
 use mqtt_codec_kit::common::QualityOfService;
 
-use crate::{
-    impl_future, impl_tokenize,
-    error::{MqttError, TokenError},
-};
+use crate::{impl_future, impl_tokenize};
 
-use super::{State, Tokenize};
+use super::{State, TokenError, Tokenize};
 
 struct InnerToken {
     qos: QualityOfService,
 
     state: State,
-    error: Option<MqttError>,
+    error: Option<TokenError>,
 }
 
 impl Default for InnerToken {

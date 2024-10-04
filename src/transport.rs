@@ -18,7 +18,7 @@ use tokio::{
 use tokio_util::codec::{FramedRead, FramedWrite};
 use url::Url;
 
-use crate::{error::MqttError, ws_stream::WsByteStream};
+use crate::{token::TokenError, ws_stream::WsByteStream};
 
 pub trait Transport {
     type FrameReader: AsyncRead + Unpin + Send + 'static;
@@ -34,7 +34,7 @@ pub trait Transport {
                 FramedRead<Self::FrameReader, MqttDecoder>,
                 FramedWrite<Self::FrameWriter, MqttEncoder>,
             ),
-            MqttError,
+            TokenError,
         >,
     > + Send;
 }
@@ -54,7 +54,7 @@ impl Transport for Tcp {
             FramedRead<Self::FrameReader, MqttDecoder>,
             FramedWrite<Self::FrameWriter, MqttEncoder>,
         ),
-        MqttError,
+        TokenError,
     > {
         type Network = (
             FramedRead<OwnedReadHalf, MqttDecoder>,
@@ -64,7 +64,7 @@ impl Transport for Tcp {
         let addrs = lookup_host(addr).await.unwrap();
 
         let mut network: Option<Network> = None;
-        let mut error = MqttError::NetworkUnreachable;
+        let mut error = TokenError::NetworkUnreachable;
 
         for addr in addrs {
             match timeout(connect_timeout, TcpStream::connect(addr)).await {
@@ -76,9 +76,9 @@ impl Transport for Tcp {
                         network = Some((frame_reader, frame_writer));
                         break;
                     }
-                    Err(err) => error = MqttError::IOError(err),
+                    Err(err) => error = TokenError::IOError(err.to_string()),
                 },
-                Err(_) => error = MqttError::ConnectTimeout,
+                Err(_) => error = TokenError::ConnectTimeout,
             }
         }
 
@@ -105,7 +105,7 @@ impl Transport for Ws {
             FramedRead<Self::FrameReader, MqttDecoder>,
             FramedWrite<Self::FrameWriter, MqttEncoder>,
         ),
-        MqttError,
+        TokenError,
     > {
         let url = Url::parse(&addr).unwrap();
 
@@ -127,9 +127,9 @@ impl Transport for Ws {
 
                     Ok((frame_reader, frame_writer))
                 }
-                Err(_) => Err(MqttError::ProtocolError),
+                Err(_) => Err(TokenError::NetworkUnreachable),
             },
-            Err(_) => Err(MqttError::ConnectTimeout),
+            Err(_) => Err(TokenError::ConnectTimeout),
         }
     }
 }

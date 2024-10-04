@@ -22,13 +22,12 @@ use mqtt_codec_kit::{
 };
 
 use crate::{
-    error::MqttError,
     net::{keep_alive, read_from_server, write_to_server},
     options::ClientOptions,
     state::State,
     token::{
         ConnectToken, DisconnectToken, PacketAndToken, PublishToken, SubscribeToken, Token,
-        Tokenize, UnsubscribeToken,
+        TokenError, Tokenize, UnsubscribeToken,
     },
     topic_store::{OnMessageArrivedHandler, Subscription},
     transport::Transport,
@@ -42,7 +41,7 @@ enum ConnectStatus {
     Connecting,
 }
 
-pub struct MqttClient<T: Transport + Send> {
+pub struct MqttClient<T> {
     options: ClientOptions,
     state: Arc<State>,
     connect_status: Arc<Mutex<ConnectStatus>>,
@@ -188,7 +187,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             }
             ConnectStatus::Disconnected => self.set_connect_status(ConnectStatus::Connecting),
             ConnectStatus::Connecting => {
-                token.set_error(MqttError::Reconnecting);
+                token.set_error(TokenError::Reconnecting);
                 return token;
             }
         }
@@ -256,18 +255,12 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                                                 msg_tx,
                                             ));
 
-                                            let mut write_task = tokio::spawn(async move {
-                                                if let Err(err) = write_to_server(
-                                                    frame_writer,
-                                                    msg_rx,
-                                                    outgoing_rx,
-                                                    state,
-                                                )
-                                                .await
-                                                {
-                                                    log::error!("write to server: {err}");
-                                                }
-                                            });
+                                            let mut write_task = tokio::spawn(write_to_server(
+                                                frame_writer,
+                                                msg_rx,
+                                                outgoing_rx,
+                                                state,
+                                            ));
 
                                             if tokio::try_join!(&mut read_task, &mut write_task)
                                                 .is_err()
@@ -297,22 +290,24 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                                     code => {
                                         token.set_return_code(code);
                                         self.set_connect_status(ConnectStatus::Disconnected);
-                                        token.set_error(MqttError::MqttConnectFailed(code.to_u8()))
+                                        token.set_error(TokenError::ConnectFailed(code.to_u8()))
                                     }
                                 }
                             } else {
                                 self.set_connect_status(ConnectStatus::Disconnected);
-                                token.set_error(MqttError::ProtocolError)
+                                token.set_error(TokenError::PacketError(
+                                    "Not Connack Packet".to_owned(),
+                                ))
                             }
                         }
                         Err(e) => {
                             self.set_connect_status(ConnectStatus::Disconnected);
-                            token.set_error(MqttError::VariablePacketError(e))
+                            token.set_error(TokenError::PacketError(e.to_string()))
                         }
                     },
                     None => {
                         self.set_connect_status(ConnectStatus::Disconnected);
-                        token.set_error(MqttError::MqttConnectFailed(0))
+                        token.set_error(TokenError::ConnectFailed(0))
                     }
                 }
             }
@@ -331,7 +326,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         log::debug!("start disconnect.");
 
         if !self.is_connected() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
             return token;
         }
 
@@ -352,7 +347,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             .await
             .is_err()
         {
-            token.set_error(MqttError::InternalChannelError);
+            token.set_error(TokenError::InternalServerError);
         }
 
         token
@@ -375,7 +370,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         log::debug!("start publish.");
 
         if !self.is_connected() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
             return token;
         }
 
@@ -386,7 +381,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                 let pkid = pkids.get_id(Token::Publish(token.clone()));
 
                 if pkid == 0 {
-                    token.set_error(MqttError::PacketIdError);
+                    token.set_error(TokenError::PacketIdError);
                     return token;
                 }
 
@@ -397,7 +392,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                 let pkid = pkids.get_id(Token::Publish(token.clone()));
 
                 if pkid == 0 {
-                    token.set_error(MqttError::PacketIdError);
+                    token.set_error(TokenError::PacketIdError);
                     return token;
                 }
 
@@ -410,7 +405,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         let topic_name = match TopicName::new(topic.to_owned()) {
             Ok(tn) => tn,
             Err(_) => {
-                token.set_error(MqttError::InvalidTopic);
+                token.set_error(TokenError::InvalidTopic);
                 return token;
             }
         };
@@ -433,7 +428,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             .await
             .is_err()
         {
-            token.set_error(MqttError::InternalChannelError);
+            token.set_error(TokenError::InternalServerError);
         }
 
         token
@@ -450,7 +445,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         log::debug!("start subscribe.");
 
         if !self.is_connected() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
             return token;
         }
 
@@ -477,14 +472,14 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         }
 
         if pkid == 0 {
-            token.set_error(MqttError::PacketIdError);
+            token.set_error(TokenError::PacketIdError);
             return token;
         }
 
         let topic_filter = match TopicFilter::new(topic.to_owned()) {
             Ok(tf) => tf,
             Err(_) => {
-                token.set_error(MqttError::InvalidTopic);
+                token.set_error(TokenError::InvalidTopic);
                 return token;
             }
         };
@@ -506,7 +501,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             .await
             .is_err()
         {
-            token.set_error(MqttError::InternalChannelError);
+            token.set_error(TokenError::InternalServerError);
         }
 
         // add subscriptions after send packet to outgoing
@@ -525,7 +520,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         log::debug!("start subscribe.");
 
         if !self.is_connected() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
             return token;
         }
 
@@ -536,7 +531,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         }
 
         if pkid == 0 {
-            token.set_error(MqttError::PacketIdError);
+            token.set_error(TokenError::PacketIdError);
             return token;
         }
 
@@ -549,7 +544,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             let topic_filter = match TopicFilter::new(topic.to_owned()) {
                 Ok(tf) => tf,
                 Err(_) => {
-                    token.set_error(MqttError::InvalidTopic);
+                    token.set_error(TokenError::InvalidTopic);
                     return token;
                 }
             };
@@ -573,7 +568,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             .await
             .is_err()
         {
-            token.set_error(MqttError::InternalChannelError);
+            token.set_error(TokenError::InternalServerError);
         }
 
         // add subscriptions after send packet to outgoing
@@ -588,7 +583,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         log::debug!("start unsubscribe.");
 
         if !self.is_connected() {
-            token.set_error(MqttError::ConnectionLost);
+            token.set_error(TokenError::ConnectionLost);
             return token;
         }
 
@@ -599,7 +594,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
         }
 
         if pkid == 0 {
-            token.set_error(MqttError::PacketIdError);
+            token.set_error(TokenError::PacketIdError);
             return token;
         }
 
@@ -610,7 +605,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             let topic_filter = match TopicFilter::new(topic.to_owned()) {
                 Ok(tf) => tf,
                 Err(_) => {
-                    token.set_error(MqttError::InvalidTopic);
+                    token.set_error(TokenError::InvalidTopic);
                     return token;
                 }
             };
@@ -633,7 +628,7 @@ impl<T: Transport + Send> Client for MqttClient<T> {
             .await
             .is_err()
         {
-            token.set_error(MqttError::InternalChannelError);
+            token.set_error(TokenError::InternalServerError);
         }
 
         token

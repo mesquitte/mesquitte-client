@@ -4,12 +4,9 @@ use parking_lot::Mutex;
 
 use mqtt_codec_kit::v4::control::ConnectReturnCode;
 
-use crate::{
-    impl_future, impl_tokenize,
-    error::{MqttError, TokenError},
-};
+use crate::{impl_future, impl_tokenize};
 
-use super::{State, Tokenize};
+use super::{State, TokenError, Tokenize};
 
 #[derive(Default, Clone)]
 pub struct ConnectToken {
@@ -21,7 +18,7 @@ struct InnerToken {
     session_present: bool,
 
     state: State,
-    error: Option<MqttError>,
+    error: Option<TokenError>,
 }
 
 impl Default for InnerToken {

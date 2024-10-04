@@ -5,7 +5,6 @@ use mqtt_codec_kit::common::QualityOfService;
 use topic_store::OnMessageArrivedHandler;
 
 pub mod client;
-pub mod error;
 pub mod message;
 mod net;
 pub mod options;

@@ -4,13 +4,9 @@ use parking_lot::Mutex;
 
 use mqtt_codec_kit::v4::packet::suback::SubscribeReturnCode;
 
-use crate::{
-    error::{MqttError, TokenError},
-    impl_future, impl_tokenize,
-    topic_store::Subscription,
-};
+use crate::{impl_future, impl_tokenize, topic_store::Subscription};
 
-use super::{State, Tokenize};
+use super::{State, TokenError, Tokenize};
 
 #[derive(Default)]
 struct InnerToken {
@@ -18,7 +14,7 @@ struct InnerToken {
     results: HashMap<String, SubscribeReturnCode>,
 
     state: State,
-    error: Option<MqttError>,
+    error: Option<TokenError>,
 }
 
 #[derive(Clone, Default)]

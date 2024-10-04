@@ -23,12 +23,12 @@ async fn main() {
     let payload = binding.as_slice();
 
     let token = cli
-        .publish("test/topic", QualityOfService::Level0, false, payload)
+        .publish("a/topic", QualityOfService::Level0, false, payload)
         .await;
     let err = token.await;
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
 
-    cli.block().await
+    // cli.block().await
 }

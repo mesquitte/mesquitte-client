@@ -2,8 +2,6 @@ use std::{future::Future, task::Waker};
 
 use mqtt_codec_kit::v4::packet::VariablePacket;
 
-use crate::error::MqttError;
-
 pub use self::{
     connect_token::ConnectToken, disconnect_token::DisconnectToken, publish_token::PublishToken,
     subscribe_token::SubscribeToken, unsubscribe_token::UnsubscribeToken,
@@ -14,6 +12,36 @@ pub mod disconnect_token;
 pub mod publish_token;
 pub mod subscribe_token;
 pub mod unsubscribe_token;
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum TokenError {
+    #[error("IO Error: {0}")]
+    IOError(String),
+    #[error("Connect Timeout")]
+    ConnectTimeout,
+    #[error("Network Unreachable")]
+    NetworkUnreachable,
+    #[error("Connect Failed, return code: ({0})")]
+    ConnectFailed(u8),
+    #[error("Connection Lost")]
+    ConnectionLost,
+    #[error("Client Reconnecting")]
+    Reconnecting,
+    #[error("Invalid Topic")]
+    InvalidTopic,
+    #[error("No Packet ID Available")]
+    PacketIdError,
+    #[error("Internal Server Error")]
+    InternalServerError,
+    #[error("Packet Error: {0}")]
+    PacketError(String),
+}
+
+impl From<std::io::Error> for TokenError {
+    fn from(err: std::io::Error) -> Self {
+        TokenError::IOError(err.to_string())
+    }
+}
 
 #[derive(Clone)]
 pub enum Token {
@@ -35,7 +63,7 @@ impl Token {
         }
     }
 
-    pub(crate) fn set_error(&mut self, err: MqttError) {
+    pub(crate) fn set_error(&mut self, err: TokenError) {
         match self {
             Token::Connect(connect_token) => connect_token.set_error(err),
             Token::Disconnect(disconnect_token) => disconnect_token.set_error(err),
@@ -68,7 +96,7 @@ impl PacketAndToken {
 }
 
 pub(crate) trait Tokenize: Future {
-    fn set_error(&mut self, error: MqttError);
+    fn set_error(&mut self, error: TokenError);
     fn flow_complete(&mut self);
 }
 
@@ -92,7 +120,7 @@ macro_rules! impl_future {
                 let inner = &mut *inner;
 
                 if inner.state.complete {
-                    let error = inner.error.as_ref().map(|e| e.into());
+                    let error = inner.error.clone();
                     Poll::Ready(error)
                 } else {
                     inner.state.waker = Some(cx.waker().clone());
@@ -107,7 +135,7 @@ macro_rules! impl_future {
 macro_rules! impl_tokenize {
     ($typ:ident) => {
         impl Tokenize for $typ {
-            fn set_error(&mut self, error: MqttError) {
+            fn set_error(&mut self, error: TokenError) {
                 let mut inner = self.inner.lock();
                 let inner = &mut *inner;
                 inner.error = Some(error);

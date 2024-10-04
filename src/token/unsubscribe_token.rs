@@ -2,19 +2,16 @@ use std::{future::Future, sync::Arc, task::Poll};
 
 use parking_lot::Mutex;
 
-use crate::{
-    error::{MqttError, TokenError},
-    impl_future, impl_tokenize,
-};
+use crate::{impl_future, impl_tokenize};
 
-use super::{State, Tokenize};
+use super::{State, TokenError, Tokenize};
 
 #[derive(Default)]
 struct InnerToken {
     subs: Vec<String>,
 
     state: State,
-    error: Option<MqttError>,
+    error: Option<TokenError>,
 }
 
 #[derive(Clone, Default)]

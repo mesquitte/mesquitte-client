@@ -24,10 +24,9 @@ use mqtt_codec_kit::{
 };
 
 use crate::{
-    error::MqttError,
     message::Message,
     state::State,
-    token::{PacketAndToken, Token, Tokenize},
+    token::{PacketAndToken, Token, TokenError, Tokenize},
 };
 
 pub async fn read_from_server<R, D>(
@@ -65,8 +64,7 @@ pub async fn write_to_server<W, E>(
     mut msg_rx: mpsc::Receiver<VariablePacket>,
     mut outgoing_rx: mpsc::Receiver<PacketAndToken>,
     state: Arc<State>,
-) -> Result<(), MqttError>
-where
+) where
     W: AsyncWrite + Unpin,
     E: Encoder<VariablePacket, Error = io::Error>,
 {
@@ -79,12 +77,8 @@ where
                         let resp = match packet {
                             VariablePacket::PublishPacket(packet) => {
                                 match handle_publish(&packet, state.clone()).await {
-                                    Ok(Some(resp)) => resp,
-                                    Ok(None) => continue,
-                                    Err(err) => {
-                                        log::error!("handle publish message failed: {}", err);
-                                        break;
-                                    }
+                                    Some(resp) => resp,
+                                    None => continue,
                                 }
                             }
                             VariablePacket::PubackPacket(packet) => {
@@ -151,7 +145,7 @@ where
                         if let Err(err) = writer.send(packet).await {
                             let errstr = err.to_string();
                             if let Some(mut token) = outgoing.token {
-                                token.set_error(MqttError::IOError(err));
+                                token.set_error(TokenError::IOError(errstr.to_owned()));
                             };
                             log::error!("write outgoing to server: {}", errstr);
                             break;
@@ -183,8 +177,6 @@ where
         }
     }
     log::info!("write loop exited.");
-
-    Ok(())
 }
 
 pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicBool>) {
@@ -222,10 +214,7 @@ pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicB
     log::info!("keep_alive loop exited.");
 }
 
-async fn handle_publish(
-    packet: &PublishPacket,
-    state: Arc<State>,
-) -> Result<Option<VariablePacket>, MqttError> {
+async fn handle_publish(packet: &PublishPacket, state: Arc<State>) -> Option<VariablePacket> {
     let (qos, pkid) = packet.qos().split();
 
     let subscriptions = &state
@@ -245,7 +234,7 @@ async fn handle_publish(
                 });
             }
 
-            Ok(None)
+            None
         }
         QualityOfService::Level1 => {
             let msg: Message = packet.into();
@@ -259,7 +248,7 @@ async fn handle_publish(
                 });
             }
 
-            Ok(Some(PubackPacket::new(pkid.unwrap()).into()))
+            Some(PubackPacket::new(pkid.unwrap()).into())
         }
         QualityOfService::Level2 => {
             let pkid = pkid.unwrap();
@@ -269,7 +258,7 @@ async fn handle_publish(
             }
             state.pending_packets.insert(pkid, packet.clone()).await;
 
-            Ok(Some(PubrecPacket::new(pkid).into()))
+            Some(PubrecPacket::new(pkid).into())
         }
     }
 }
