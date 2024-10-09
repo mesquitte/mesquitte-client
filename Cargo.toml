@@ -14,6 +14,7 @@ moka = { version = "0.12", features = ["future"] }
 mqtt-codec-kit = { version = "1.0" }
 parking_lot = "0.12"
 pin-project-lite = "0.2"
+s2n-quic = "1"
 thiserror = "1.0"
 tokio = { version = "1.40", features = [
     "macros",

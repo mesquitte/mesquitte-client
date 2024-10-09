@@ -21,12 +21,16 @@ pub enum TokenError {
     ConnectTimeout,
     #[error("Network Unreachable")]
     NetworkUnreachable,
+    #[error("Connect Error: {0}")]
+    ConnectError(String),
     #[error("Connect Failed, return code: ({0})")]
     ConnectFailed(u8),
     #[error("Connection Lost")]
     ConnectionLost,
     #[error("Client Reconnecting")]
     Reconnecting,
+    #[error("Connection Error: {0}")]
+    ConnectionError(String),
     #[error("Invalid Topic")]
     InvalidTopic,
     #[error("No Packet ID Available")]
@@ -40,6 +44,18 @@ pub enum TokenError {
 impl From<std::io::Error> for TokenError {
     fn from(err: std::io::Error) -> Self {
         TokenError::IOError(err.to_string())
+    }
+}
+
+impl From<s2n_quic::provider::StartError> for TokenError {
+    fn from(err: s2n_quic::provider::StartError) -> Self {
+        TokenError::ConnectError(err.to_string())
+    }
+}
+
+impl From<s2n_quic::connection::Error> for TokenError {
+    fn from(err: s2n_quic::connection::Error) -> Self {
+        TokenError::ConnectionError(err.to_string())
     }
 }
 
