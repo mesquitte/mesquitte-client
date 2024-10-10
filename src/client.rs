@@ -241,25 +241,28 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                                             let exit = Arc::new(AtomicBool::new(false));
                                             let (msg_tx, msg_rx) = mpsc::channel(8);
 
-                                            let ping_state = state.clone();
-                                            let exit_ping = exit.clone();
+                                            let clean_up_state = state.clone();
 
-                                            tokio::spawn(keep_alive(
-                                                keep_alive_duration,
-                                                ping_state,
-                                                exit_ping,
-                                            ));
-
+                                            let read_state = state.clone();
                                             let mut read_task = tokio::spawn(read_from_server(
                                                 frame_reader,
                                                 msg_tx,
+                                                read_state,
                                             ));
 
+                                            let write_state = state.clone();
                                             let mut write_task = tokio::spawn(write_to_server(
                                                 frame_writer,
                                                 msg_rx,
                                                 outgoing_rx,
+                                                write_state,
+                                            ));
+
+                                            let ping_exit = exit.clone();
+                                            tokio::spawn(keep_alive(
+                                                keep_alive_duration,
                                                 state,
+                                                ping_exit,
                                             ));
 
                                             if tokio::try_join!(&mut read_task, &mut write_task)
@@ -272,6 +275,9 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                                             let mut connect_status = connect_status.lock();
                                             *connect_status = ConnectStatus::Disconnected;
                                             exit.store(true, Ordering::SeqCst);
+
+                                            let mut pkids = clean_up_state.packet_ids.lock();
+                                            pkids.clean_up();
                                         });
 
                                         {
@@ -300,9 +306,9 @@ impl<T: Transport + Send> Client for MqttClient<T> {
                                 ))
                             }
                         }
-                        Err(e) => {
+                        Err(err) => {
                             self.set_connect_status(ConnectStatus::Disconnected);
-                            token.set_error(TokenError::PacketError(e.to_string()))
+                            token.set_error(TokenError::PacketError(err.to_string()))
                         }
                     },
                     None => {

@@ -32,6 +32,7 @@ use crate::{
 pub async fn read_from_server<R, D>(
     mut reader: FramedRead<R, D>,
     msg_tx: mpsc::Sender<VariablePacket>,
+    state: Arc<State>,
 ) where
     R: AsyncRead + Unpin,
     D: Decoder<Item = VariablePacket, Error = VariablePacketError>,
@@ -39,20 +40,64 @@ pub async fn read_from_server<R, D>(
     log::info!("start read loop.");
     loop {
         match reader.next().await {
+            Some(Ok(packet)) => {
+                log::debug!("read from server: {:?}", packet);
+
+                let resp = match packet {
+                    VariablePacket::PublishPacket(packet) => {
+                        match handle_publish(&packet, state.clone()).await {
+                            Some(resp) => resp,
+                            None => continue,
+                        }
+                    }
+                    VariablePacket::PubackPacket(packet) => {
+                        handle_puback(packet.packet_identifier(), state.clone());
+                        continue;
+                    }
+                    VariablePacket::PubrecPacket(packet) => {
+                        handle_pubrec(packet.packet_identifier())
+                    }
+                    VariablePacket::PubrelPacket(packet) => {
+                        handle_pubrel(packet.packet_identifier(), state.clone()).await
+                    }
+                    VariablePacket::PubcompPacket(packet) => {
+                        handle_pubcomp(packet.packet_identifier(), state.clone());
+                        continue;
+                    }
+                    VariablePacket::SubackPacket(packet) => {
+                        handle_suback(&packet, state.clone());
+                        continue;
+                    }
+                    VariablePacket::UnsubackPacket(packet) => {
+                        handle_unsuback(packet.packet_identifier(), state.clone());
+                        continue;
+                    }
+                    VariablePacket::DisconnectPacket(_packet) => {
+                        handle_disconnect();
+                        break;
+                    }
+                    VariablePacket::PingrespPacket(_packet) => {
+                        handle_pingresp();
+                        continue;
+                    }
+                    _ => {
+                        log::debug!("unsupported packet: {:?}", packet);
+                        break;
+                    }
+                };
+
+                if let Err(err) = msg_tx.send(resp).await {
+                    log::error!("msg channel closed: {}", err);
+                    break;
+                }
+            }
+            Some(Err(err)) => {
+                log::error!("read from server: {}", err);
+                break;
+            }
             None => {
                 log::info!("connection closed.");
                 break;
-            }
-            Some(Err(e)) => {
-                log::warn!("read from server: {}", e);
-                break;
-            }
-            Some(Ok(packet)) => {
-                log::debug!("read from server: {:?}", packet);
-                if let Err(err) = msg_tx.send(packet).await {
-                    log::error!("receiver closed: {}", err);
-                    break;
-                }
             }
         }
     }
@@ -74,52 +119,9 @@ pub async fn write_to_server<W, E>(
             packet = msg_rx.recv() => {
                 match packet {
                     Some(packet) => {
-                        let resp = match packet {
-                            VariablePacket::PublishPacket(packet) => {
-                                match handle_publish(&packet, state.clone()).await {
-                                    Some(resp) => resp,
-                                    None => continue,
-                                }
-                            }
-                            VariablePacket::PubackPacket(packet) => {
-                                handle_puback(packet.packet_identifier(), state.clone());
-                                continue;
-                            }
-                            VariablePacket::PubrecPacket(packet) => {
-                                handle_pubrec(packet.packet_identifier())
-                            }
-                            VariablePacket::PubrelPacket(packet) => {
-                                handle_pubrel(packet.packet_identifier(), state.clone()).await
-                            }
-                            VariablePacket::PubcompPacket(packet) => {
-                                handle_pubcomp(packet.packet_identifier(), state.clone());
-                                continue;
-                            }
-                            VariablePacket::SubackPacket(packet) => {
-                                handle_suback(&packet, state.clone());
-                                continue;
-                            }
-                            VariablePacket::UnsubackPacket(packet) => {
-                                handle_unsuback(packet.packet_identifier(), state.clone());
-                                continue;
-                            }
-                            VariablePacket::DisconnectPacket(_packet) => {
-                                handle_disconnect();
-                                break;
-                            }
-                            VariablePacket::PingrespPacket(_packet) => {
-                                handle_pingresp();
-                                continue;
-                            }
-                            _ => {
-                                log::debug!("unsupported packet: {:?}", packet);
-                                break;
-                            }
-                        };
+                        log::debug!("write response packet {:?}", packet);
 
-                        log::debug!("write response packet {:?}", resp);
-
-                        if let Err(err) = writer.send(resp).await {
+                        if let Err(err) = writer.send(packet).await {
                             log::error!("write to server {}", err);
                             break;
                         }
@@ -161,7 +163,7 @@ pub async fn write_to_server<W, E>(
                                 if token.qos() == QualityOfService::Level0 {
                                     token.flow_complete()
                                 }
-                            },
+                            }
                             Some(Token::Disconnect(mut token)) => {
                                 token.flow_complete()
                             }
