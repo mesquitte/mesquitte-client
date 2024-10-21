@@ -19,6 +19,7 @@ impl PacketIds {
         }
     }
 
+    #[allow(dead_code)]
     pub fn claim_id(&mut self, token: Token, id: u16) {
         if !self.index.contains_key(&id) {
             self.index.insert(id, token);

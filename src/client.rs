@@ -147,30 +147,34 @@ impl<T: Transport + Send> MqttClient<T> {
                     log::info!("reconnect success.");
                     if !token.session_present() {
                         log::info!("session present flag is false, start resubscribe job.");
-                        {
-                            let mut packet_ids = self.state.packet_ids.lock();
-                            packet_ids.clean_up();
-                        }
-                        // resubscribe
-                        let subs;
-                        {
-                            let state = self.state.clone();
-                            let subscriptions = state.subscriptions.lock();
-
-                            subs = subscriptions.clone();
-                        }
-                        self.state.topic_manager.clear();
-
-                        for (topic, sub) in subs {
-                            let token = self.subscribe(topic.to_owned(), sub.qos, sub.handler).await;
-                            if token.await.is_none() {
-                                log::info!("resubscribe topic {} success.", topic);
-                            } else {
-                                log::error!("resubscribe topic {} failed.", topic);
-                            }
-                        }
+                        self.resume().await;
                     }
                 }
+            }
+        }
+    }
+
+    async fn resume(&mut self) {
+        {
+            let mut packet_ids = self.state.packet_ids.lock();
+            packet_ids.clean_up();
+        }
+        // resubscribe
+        let subs;
+        {
+            let state = self.state.clone();
+            let subscriptions = state.subscriptions.lock();
+
+            subs = subscriptions.clone();
+        }
+        self.state.topic_manager.clear();
+
+        for (topic, sub) in subs {
+            let token = self.subscribe(topic.to_owned(), sub.qos, sub.handler).await;
+            if token.await.is_none() {
+                log::info!("resubscribe topic {} success.", topic);
+            } else {
+                log::error!("resubscribe topic {} failed.", topic);
             }
         }
     }

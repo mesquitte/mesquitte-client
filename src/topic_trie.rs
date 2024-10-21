@@ -102,6 +102,7 @@ impl MqttTopicTrie {
         matching_subscriptions
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn match_topic(
         &self,
         node: &Arc<RwLock<TrieNode>>,
@@ -140,6 +141,7 @@ impl MqttTopicTrie {
     }
 
     // Helper function to recursively clear subscriptions from nodes
+    #[allow(clippy::only_used_in_recursion)]
     fn clear_node(&self, node: &mut TrieNode) {
         // Clear the subscriptions of the current node
         node.subscriptions.clear();
