@@ -1,17 +1,20 @@
-[package]
-name = "mesquitte-client"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = ["v4", "examples"]
+
+[workspace.package]
+license = "Apache-2.0"
+readme = "README.md"
+authors = ["qinxin0720 <qinxin_0720@live.com>"]
 edition = "2021"
+rust-version = "1.82"
 
-[features]
-default = ["v4"]
-v4 = ["mqtt-codec-kit/v4", "mqtt-codec-kit/tokio-codec"]
-
-[dependencies]
+[workspace.dependencies]
 async-tungstenite = { version = "0.28", features = ["tokio-runtime", "url"] }
+env_logger = "0.11"
 futures = { version = "0.3" }
 moka = { version = "0.12", features = ["future"] }
-mqtt-codec-kit = { version = "1.0" }
+mqtt-codec-kit = { version = "1.0", default-features = false }
 parking_lot = "0.12"
 pin-project-lite = "0.2"
 s2n-quic = "1"
@@ -28,11 +31,13 @@ tokio-util = { version = "0.7", features = ["codec"] }
 url = "*"
 log = "0.4"
 
-[dev-dependencies]
-env_logger = "0.11"
-tokio = { version = "1", features = [
-    "macros",
-    "rt-multi-thread",
-    "time",
-    "signal",
-] }
+[profile.release]
+lto = true
+codegen-units = 1
+incremental = false
+
+[profile.bench]
+lto = true
+codegen-units = 1
+incremental = false
+debug = true

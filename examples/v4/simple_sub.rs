@@ -1,13 +1,24 @@
 use std::{env, time::Duration};
 
-use mesquitte_client::{
+use mesquitte_client_v4::{
     client::MqttClient, message::Message, options::ClientOptions, transport, Client,
 };
 use mqtt_codec_kit::common::QualityOfService;
 
-fn handler(msg: &Message) {
+fn handler1(msg: &Message) {
     log::info!(
-        "topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
+        "message from handler1, topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
+        msg.topic(),
+        String::from_utf8(msg.payload().to_vec()),
+        msg.qos(),
+        msg.retain(),
+        msg.dup()
+    );
+}
+
+fn handler2(msg: &Message) {
+    log::info!(
+        "message from handler2, topic: {}, payload: {:?}, qos: {:?}, retain: {}, dup: {}",
         msg.topic(),
         String::from_utf8(msg.payload().to_vec()),
         msg.qos(),
@@ -21,12 +32,12 @@ async fn main() {
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
-    let transport = transport::Quic::new("examples/certs/cert.pem");
+    let transport = transport::Tcp {};
 
     let mut options = ClientOptions::new();
     options
-        .set_server("127.0.0.1:1883")
-        .set_client_id("quic-client")
+        .set_server("localhost:1883")
+        .set_client_id("tcp-sub-client")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
@@ -40,18 +51,23 @@ async fn main() {
     }
 
     let token = cli
-        .subscribe("test/topic", QualityOfService::Level0, handler)
+        .subscribe("a/#", QualityOfService::Level0, handler1)
         .await;
     let err = token.await;
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
 
-    let binding = Vec::from("hello, world!");
-    let payload = binding.as_slice();
+    let token = cli
+        .subscribe("a/b", QualityOfService::Level1, handler1)
+        .await;
+    let err = token.await;
+    if err.is_some() {
+        println!("{:#?}", err.unwrap());
+    }
 
     let token = cli
-        .publish("test/topic", QualityOfService::Level0, false, payload)
+        .subscribe("b/#", QualityOfService::Level1, handler2)
         .await;
     let err = token.await;
     if err.is_some() {

@@ -1,0 +1,30 @@
+[package]
+name = "examples"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+log.workspace = true
+mesquitte-client-v4 = { path = "../v4" }
+mqtt-codec-kit.workspace = true
+tokio.workspace = true
+
+[[example]]
+name = "v4_quic"
+path = "v4/quic.rs"
+
+
+[[example]]
+name = "v4_websocket"
+path = "v4/websocket.rs"
+
+[[example]]
+name = "v4_simple_pub"
+path = "v4/simple_pub.rs"
+
+[[example]]
+name = "v4_simple_sub"
+path = "v4/simple_sub.rs"

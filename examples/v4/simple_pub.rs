@@ -1,4 +1,4 @@
-use mesquitte_client::{client::MqttClient, options::ClientOptions, transport, Client};
+use mesquitte_client_v4::{client::MqttClient, options::ClientOptions, transport, Client};
 use mqtt_codec_kit::common::QualityOfService;
 
 #[tokio::main]

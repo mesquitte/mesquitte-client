@@ -1,0 +1,29 @@
+[package]
+name = "mesquitte-client-v4"
+version = "0.1.0"
+description = "MQTT v3.1.1 client."
+authors.workspace = true
+license.workspace = true
+keywords = ["mqtt", "client", "network", "async"]
+categories = ["network-programming", "asynchronous"]
+repository = "https://github.com/mesquitte/mesquitte-client"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-tungstenite.workspace = true
+futures.workspace = true
+moka.workspace = true
+mqtt-codec-kit = { workspace = true, features = ["v4", "tokio-codec"] }
+parking_lot.workspace = true
+pin-project-lite.workspace = true
+s2n-quic.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+tokio.workspace = true

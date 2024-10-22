@@ -1,6 +1,6 @@
 use std::{env, time::Duration};
 
-use mesquitte_client::{
+use mesquitte_client_v4::{
     client::MqttClient, message::Message, options::ClientOptions, transport, Client,
 };
 use mqtt_codec_kit::common::QualityOfService;
@@ -21,12 +21,12 @@ async fn main() {
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
-    let transport = transport::Ws {};
+    let transport = transport::Quic::new("examples/certs/cert.pem");
 
     let mut options = ClientOptions::new();
     options
-        .set_server("ws://localhost:8083/mqtt")
-        .set_client_id("ws-client")
+        .set_server("127.0.0.1:1883")
+        .set_client_id("quic-client")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
