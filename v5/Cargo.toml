@@ -1,7 +1,7 @@
 [package]
-name = "mesquitte-client-v4"
+name = "mesquitte-client-v5"
 version = "0.1.0"
-description = "MQTT v3.1.1 client."
+description = "MQTT v5.0 client."
 authors.workspace = true
 license.workspace = true
 keywords = ["mqtt", "client", "network", "async"]
@@ -14,7 +14,7 @@ rust-version.workspace = true
 async-tungstenite.workspace = true
 futures.workspace = true
 moka.workspace = true
-mqtt-codec-kit = { workspace = true, features = ["v4", "tokio-codec"] }
+mqtt-codec-kit = { workspace = true, features = ["v5", "tokio-codec"] }
 parking_lot.workspace = true
 pin-project-lite.workspace = true
 s2n-quic.workspace = true

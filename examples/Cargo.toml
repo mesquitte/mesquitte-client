@@ -9,6 +9,7 @@ rust-version.workspace = true
 env_logger.workspace = true
 log.workspace = true
 mesquitte-client-v4 = { path = "../v4" }
+mesquitte-client-v5 = { path = "../v5" }
 mqtt-codec-kit.workspace = true
 tokio.workspace = true
 
@@ -28,3 +29,19 @@ path = "v4/simple_pub.rs"
 [[example]]
 name = "v4_simple_sub"
 path = "v4/simple_sub.rs"
+
+[[example]]
+name = "v5_quic"
+path = "v5/quic.rs"
+
+[[example]]
+name = "v5_websocket"
+path = "v5/websocket.rs"
+
+[[example]]
+name = "v5_simple_pub"
+path = "v5/simple_pub.rs"
+
+[[example]]
+name = "v5_simple_sub"
+path = "v5/simple_sub.rs"

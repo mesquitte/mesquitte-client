@@ -1,0 +1,16 @@
+[package]
+name = "utils"
+version = "0.1.0"
+description = "common utils."
+authors.workspace = true
+license.workspace = true
+categories = ["network-programming", "asynchronous"]
+repository = "https://github.com/mesquitte/mesquitte-client"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-tungstenite.workspace = true
+futures.workspace = true
+pin-project-lite.workspace = true
+tokio.workspace = true

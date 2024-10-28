@@ -1,7 +1,7 @@
 use std::{env, time::Duration};
 
 use mesquitte_client_v4::{
-    client::MqttClient, message::Message, options::ClientOptions, transport, Client,
+    client::ClientV4, message::Message, options::ClientOptions, transport, Client,
 };
 use mqtt_codec_kit::common::QualityOfService;
 
@@ -26,12 +26,12 @@ async fn main() {
     let mut options = ClientOptions::new();
     options
         .set_server("ws://localhost:8083/mqtt")
-        .set_client_id("ws-client")
+        .set_client_id("ws-client-v4")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
 
-    let mut cli = MqttClient::new(options, transport);
+    let mut cli = ClientV4::new(options, transport);
 
     let token = cli.connect().await;
     let err = token.await;

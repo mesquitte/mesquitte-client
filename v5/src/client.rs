@@ -12,11 +12,15 @@ use tokio::{
 
 use mqtt_codec_kit::{
     common::{qos::QoSWithPacketIdentifier, QualityOfService, TopicFilter, TopicName},
-    v4::{
-        control::ConnectReturnCode,
+    v5::{
+        control::{
+            ConnectReasonCode, DisconnectReasonCode, PublishProperties, SubscribeProperties,
+        },
         packet::{
-            connect::LastWill, ConnectPacket, DisconnectPacket, PublishPacket, SubscribePacket,
-            UnsubscribePacket, VariablePacket,
+            connect::{ConnectProperties, LastWill},
+            subscribe::SubscribeOptions,
+            ConnectPacket, DisconnectPacket, PublishPacket, SubscribePacket, UnsubscribePacket,
+            VariablePacket,
         },
     },
 };
@@ -41,17 +45,18 @@ enum ConnectStatus {
     Connecting,
 }
 
-pub struct ClientV4<T> {
+pub struct ClientV5<T> {
     options: ClientOptions,
     state: Arc<State>,
     connect_status: Arc<Mutex<ConnectStatus>>,
     notify: Arc<Notify>,
     transport: T,
+    connect_properties: ConnectProperties,
 
     manual_disconnect: Arc<AtomicBool>,
 }
 
-impl<T: Transport + Send> ClientV4<T> {
+impl<T: Transport + Send> ClientV5<T> {
     pub fn new(options: ClientOptions, transport: T) -> Self {
         Self {
             options,
@@ -59,6 +64,7 @@ impl<T: Transport + Send> ClientV4<T> {
             connect_status: Arc::new(Mutex::new(ConnectStatus::Disconnected)),
             notify: Arc::new(Notify::new()),
             transport,
+            connect_properties: Default::default(),
 
             manual_disconnect: Arc::new(AtomicBool::new(false)),
         }
@@ -80,19 +86,28 @@ impl<T: Transport + Send> ClientV4<T> {
         *status == ConnectStatus::Connected
     }
 
-    fn build_connect_packet(&self) -> ConnectPacket {
-        let mut connect = ConnectPacket::new(self.options.client_id());
-        connect.set_clean_session(self.options.clean_session());
+    fn build_connect_packet(&self, properties: ConnectProperties) -> ConnectPacket {
+        let id = if self.options.client_id().is_some() {
+            self.options.client_id().clone().unwrap()
+        } else {
+            "".to_owned()
+        };
+        let mut connect = ConnectPacket::new(id);
+        connect.set_clean_session(self.options.clean_start());
         connect.set_keep_alive(self.options.keep_alive().as_secs() as u16);
 
         if self.options.will_enabled() {
             connect.set_will_qos(self.options.will_qos() as u8);
             connect.set_will_retain(self.options.will_retained());
 
-            let will_msg = LastWill::new(
+            let mut will_msg = LastWill::new(
                 self.options.will_topic(),
                 self.options.will_payload().to_vec(),
             );
+
+            if let Ok(will) = &mut will_msg {
+                (*will).set_properties(self.options.will_properties());
+            }
 
             connect.set_will(Some(will_msg.unwrap()));
         }
@@ -103,6 +118,8 @@ impl<T: Transport + Send> ClientV4<T> {
         if !self.options.password().is_empty() {
             connect.set_password(Some(self.options.password().into()));
         }
+
+        connect.set_properties(properties);
 
         connect
     }
@@ -138,7 +155,7 @@ impl<T: Transport + Send> ClientV4<T> {
                 _ = self.notify.notified() => {
                     cnt += 1;
                     log::info!("reconnecting @ {cnt}.");
-                    let token = self.connect().await;
+                    let token = self.connect(self.connect_properties.clone()).await;
                     let err = token.clone().await;
                     if err.is_some() {
                         continue;
@@ -170,7 +187,9 @@ impl<T: Transport + Send> ClientV4<T> {
         self.state.topic_manager.clear();
 
         for (topic, sub) in subs {
-            let token = self.subscribe(topic.to_owned(), sub.qos, sub.handler).await;
+            let token = self
+                .subscribe(topic.to_owned(), sub.options, sub.properties, sub.handler)
+                .await;
             if token.await.is_none() {
                 log::info!("resubscribe topic {} success.", topic);
             } else {
@@ -180,13 +199,13 @@ impl<T: Transport + Send> ClientV4<T> {
     }
 }
 
-impl<T: Transport + Send> Client for ClientV4<T> {
-    async fn connect(&mut self) -> ConnectToken {
+impl<T: Transport + Send> Client for ClientV5<T> {
+    async fn connect(&mut self, properties: ConnectProperties) -> ConnectToken {
         let mut token = ConnectToken::default();
 
         match self.connect_status() {
             ConnectStatus::Connected => {
-                token.set_return_code(ConnectReturnCode::ConnectionAccepted);
+                token.set_reason_code(ConnectReasonCode::Success);
                 return token;
             }
             ConnectStatus::Disconnected => self.set_connect_status(ConnectStatus::Connecting),
@@ -206,7 +225,8 @@ impl<T: Transport + Send> Client for ClientV4<T> {
 
         match network {
             Ok((mut frame_reader, mut frame_writer)) => {
-                let packet: VariablePacket = self.build_connect_packet().into();
+                self.connect_properties = properties.clone();
+                let packet: VariablePacket = self.build_connect_packet(properties).into();
 
                 let _ = frame_writer.send(packet).await;
 
@@ -214,8 +234,8 @@ impl<T: Transport + Send> Client for ClientV4<T> {
                     Some(packet) => match packet {
                         Ok(packet) => {
                             if let VariablePacket::ConnackPacket(p) = packet {
-                                match p.connect_return_code() {
-                                    ConnectReturnCode::ConnectionAccepted => {
+                                match p.connect_reason_code() {
+                                    ConnectReasonCode::Success => {
                                         let (outgoing_tx, outgoing_rx) = mpsc::channel(8);
 
                                         let mut state = State::new();
@@ -295,10 +315,12 @@ impl<T: Transport + Send> Client for ClientV4<T> {
                                             token.set_session_present();
                                         }
 
+                                        token.set_connack_properties(p.properties().clone());
+
                                         token.flow_complete();
                                     }
                                     code => {
-                                        token.set_return_code(code);
+                                        token.set_reason_code(code);
                                         self.set_connect_status(ConnectStatus::Disconnected);
                                         token.set_error(TokenError::ConnectFailed(code.into()))
                                     }
@@ -340,7 +362,7 @@ impl<T: Transport + Send> Client for ClientV4<T> {
             return token;
         }
 
-        let packet = DisconnectPacket::new().into();
+        let packet = DisconnectPacket::new(DisconnectReasonCode::NormalDisconnection).into();
 
         self.manual_disconnect.store(true, Ordering::SeqCst);
 
@@ -369,6 +391,7 @@ impl<T: Transport + Send> Client for ClientV4<T> {
         qos: QualityOfService,
         retained: bool,
         payload: V,
+        properties: PublishProperties,
     ) -> PublishToken
     where
         S: Into<String> + Send,
@@ -422,6 +445,7 @@ impl<T: Transport + Send> Client for ClientV4<T> {
 
         let mut packet = PublishPacket::new(topic_name, qos, payload);
         packet.set_retain(retained);
+        packet.set_properties(properties);
 
         let packet = packet.into();
 
@@ -447,7 +471,8 @@ impl<T: Transport + Send> Client for ClientV4<T> {
     async fn subscribe<S: Into<String> + Send>(
         &mut self,
         topic: S,
-        qos: QualityOfService,
+        options: SubscribeOptions,
+        properties: SubscribeProperties,
         callback: OnMessageArrivedHandler,
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
@@ -494,9 +519,13 @@ impl<T: Transport + Send> Client for ClientV4<T> {
             }
         };
 
-        let subscribes = vec![(topic_filter, qos)];
+        let subscribes = vec![(topic_filter, options)];
 
-        let packet = SubscribePacket::new(pkid, subscribes).into();
+        let mut packet = SubscribePacket::new(pkid, subscribes);
+
+        packet.set_properties(properties.clone());
+
+        let packet = packet.into();
 
         log::debug!("send subscribe packet.");
         if self
@@ -515,14 +544,16 @@ impl<T: Transport + Send> Client for ClientV4<T> {
         }
 
         // add subscriptions after send packet to outgoing
-        token.add_subscriptions(vec![Subscription::new(topic, qos, callback)]);
+        token.add_subscriptions(vec![Subscription::new(
+            topic, options, properties, callback,
+        )]);
 
         token
     }
 
     async fn subscribe_multiple<S: Into<String> + Clone + Send>(
         &mut self,
-        topics: Vec<(S, QualityOfService)>,
+        topics: Vec<(S, SubscribeOptions, SubscribeProperties)>,
         callback: OnMessageArrivedHandler,
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
@@ -548,7 +579,7 @@ impl<T: Transport + Send> Client for ClientV4<T> {
         let mut subscribes = vec![];
         let mut subscriptions = vec![];
 
-        for (topic, qos) in topics {
+        for (topic, options, properties) in topics {
             let topic: String = topic.into();
 
             let topic_filter = match TopicFilter::new(topic.to_owned()) {
@@ -559,8 +590,8 @@ impl<T: Transport + Send> Client for ClientV4<T> {
                 }
             };
 
-            subscribes.push((topic_filter, qos));
-            subscriptions.push(Subscription::new(topic, qos, callback));
+            subscribes.push((topic_filter, options));
+            subscriptions.push(Subscription::new(topic, options, properties, callback));
         }
 
         let packet = SubscribePacket::new(pkid, subscribes).into();
@@ -649,11 +680,17 @@ impl<T: Transport + Send> Client for ClientV4<T> {
 mod test {
     use std::env;
 
-    use mqtt_codec_kit::common::QualityOfService;
+    use mqtt_codec_kit::{
+        common::QualityOfService,
+        v5::{
+            control::{PublishProperties, SubscribeProperties},
+            packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
+        },
+    };
 
     use crate::{client::Client, message::Message, transport};
 
-    use super::{ClientOptions, ClientV4};
+    use super::{ClientOptions, ClientV5};
 
     fn handler(msg: &Message) {
         log::debug!(
@@ -680,9 +717,9 @@ mod test {
 
         let transport = transport::Tcp {};
 
-        let mut cli = ClientV4::new(options, transport);
+        let mut cli = ClientV5::new(options, transport);
 
-        let token = cli.connect().await;
+        let token = cli.connect(ConnectProperties::default()).await;
 
         let err = token.await;
         if err.is_some() {
@@ -692,8 +729,11 @@ mod test {
         let binding = Vec::from("hello, world!");
         let payload = binding.as_slice();
 
+        let options = SubscribeOptions::default();
+        let properties = SubscribeProperties::default();
+
         let token = cli
-            .subscribe("sport/football", QualityOfService::Level0, handler)
+            .subscribe("sport/football", options, properties.clone(), handler)
             .await;
         let err = token.await;
         if err.is_some() {
@@ -701,7 +741,7 @@ mod test {
         }
 
         let token = cli
-            .subscribe("sport/basketball", QualityOfService::Level0, handler)
+            .subscribe("sport/basketball", options, properties, handler)
             .await;
         let err = token.await;
         if err.is_some() {
@@ -709,7 +749,13 @@ mod test {
         }
 
         let token = cli
-            .publish("sport/football", QualityOfService::Level2, false, payload)
+            .publish(
+                "sport/football",
+                QualityOfService::Level2,
+                false,
+                payload,
+                PublishProperties::default(),
+            )
             .await;
         let err = token.await;
         if err.is_some() {

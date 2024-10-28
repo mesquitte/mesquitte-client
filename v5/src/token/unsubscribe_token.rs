@@ -1,5 +1,6 @@
 use std::{future::Future, sync::Arc, task::Poll};
 
+use mqtt_codec_kit::v5::control::UnsubackProperties;
 use parking_lot::Mutex;
 
 use crate::{impl_future, impl_tokenize};
@@ -9,6 +10,7 @@ use super::{State, TokenError, Tokenize};
 #[derive(Default)]
 struct InnerToken {
     topics: Vec<String>,
+    unsuback_properties: UnsubackProperties,
 
     state: State,
     error: Option<TokenError>,
@@ -27,11 +29,25 @@ impl UnsubscribeToken {
         inner.topics.push(topic.into());
     }
 
+    pub(crate) fn set_unsuback_properties(&mut self, properties: UnsubackProperties) {
+        let mut inner = self.inner.lock();
+        let inner = &mut *inner;
+
+        inner.unsuback_properties = properties;
+    }
+
     pub fn topics(&self) -> Vec<String> {
         let inner = self.inner.lock();
         let inner = &*inner;
 
         inner.topics.clone()
+    }
+
+    pub fn unsuback_properties(&self) -> UnsubackProperties {
+        let inner = self.inner.lock();
+        let inner = &*inner;
+
+        inner.unsuback_properties.clone()
     }
 }
 

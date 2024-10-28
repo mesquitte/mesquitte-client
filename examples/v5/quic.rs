@@ -1,9 +1,15 @@
 use std::{env, time::Duration};
 
-use mesquitte_client_v4::{
-    client::ClientV4, message::Message, options::ClientOptions, transport, Client,
+use mesquitte_client_v5::{
+    client::ClientV5, message::Message, options::ClientOptions, transport, Client,
 };
-use mqtt_codec_kit::common::QualityOfService;
+use mqtt_codec_kit::{
+    common::QualityOfService,
+    v5::{
+        control::{PublishProperties, SubscribeProperties},
+        packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
+    },
+};
 
 fn handler(msg: &Message) {
     log::info!(
@@ -26,21 +32,24 @@ async fn main() {
     let mut options = ClientOptions::new();
     options
         .set_server("127.0.0.1:1883")
-        .set_client_id("quic-client-v4")
+        .set_client_id("quic-client-v5")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
 
-    let mut cli = ClientV4::new(options, transport);
+    let mut cli = ClientV5::new(options, transport);
 
-    let token = cli.connect().await;
+    let token = cli.connect(ConnectProperties::default()).await;
     let err = token.await;
     if err.is_some() {
         panic!("{:#?}", err.unwrap());
     }
 
+    let subscribe_options = SubscribeOptions::default();
+    let properties = SubscribeProperties::default();
+
     let token = cli
-        .subscribe("test/topic", QualityOfService::Level0, handler)
+        .subscribe("test/topic", subscribe_options, properties, handler)
         .await;
     let err = token.await;
     if err.is_some() {
@@ -51,7 +60,13 @@ async fn main() {
     let payload = binding.as_slice();
 
     let token = cli
-        .publish("test/topic", QualityOfService::Level0, false, payload)
+        .publish(
+            "test/topic",
+            QualityOfService::Level0,
+            false,
+            payload,
+            PublishProperties::default(),
+        )
         .await;
     let err = token.await;
     if err.is_some() {

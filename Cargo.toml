@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["v4", "examples"]
+members = ["v4", "v5", "utils", "examples"]
 
 [workspace.package]
 license = "Apache-2.0"
@@ -10,6 +10,8 @@ edition = "2021"
 rust-version = "1.82"
 
 [workspace.dependencies]
+utils = { path = "./utils" }
+
 async-tungstenite = { version = "0.28", features = ["tokio-runtime", "url"] }
 env_logger = "0.11"
 futures = { version = "0.3" }
@@ -28,7 +30,7 @@ tokio = { version = "1.40", features = [
     "time",
 ] }
 tokio-util = { version = "0.7", features = ["codec"] }
-url = "*"
+url = "2"
 log = "0.4"
 
 [profile.release]

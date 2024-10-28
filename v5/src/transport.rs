@@ -5,7 +5,7 @@ use async_tungstenite::{
     tungstenite::{client::IntoClientRequest, http::HeaderValue},
     WebSocketStream,
 };
-use mqtt_codec_kit::v4::packet::{MqttDecoder, MqttEncoder};
+use mqtt_codec_kit::v5::packet::{MqttDecoder, MqttEncoder};
 use s2n_quic::{client::Connect, stream::BidirectionalStream, Client};
 use tokio::{
     io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},

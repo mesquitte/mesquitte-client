@@ -17,9 +17,15 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 
 use mqtt_codec_kit::{
     common::QualityOfService,
-    v4::packet::{
-        suback::SubscribeReturnCode, PingreqPacket, PubackPacket, PubcompPacket, PublishPacket,
-        PubrecPacket, PubrelPacket, SubackPacket, VariablePacket, VariablePacketError,
+    v5::{
+        control::{
+            PubackReasonCode, PubcompReasonCode, PubrecReasonCode, PubrelReasonCode,
+            UnsubackProperties,
+        },
+        packet::{
+            suback::SubscribeReasonCode, PingreqPacket, PubackPacket, PubcompPacket, PublishPacket,
+            PubrecPacket, PubrelPacket, SubackPacket, VariablePacket, VariablePacketError,
+        },
     },
 };
 
@@ -69,7 +75,11 @@ pub async fn read_from_server<R, D>(
                         continue;
                     }
                     VariablePacket::UnsubackPacket(packet) => {
-                        handle_unsuback(packet.packet_identifier(), state.clone());
+                        handle_unsuback(
+                            packet.packet_identifier(),
+                            packet.properties().clone(),
+                            state.clone(),
+                        );
                         continue;
                     }
                     VariablePacket::DisconnectPacket(_packet) => {
@@ -250,7 +260,7 @@ async fn handle_publish(packet: &PublishPacket, state: Arc<State>) -> Option<Var
                 });
             }
 
-            Some(PubackPacket::new(pkid.unwrap()).into())
+            Some(PubackPacket::new(pkid.unwrap(), PubackReasonCode::Success).into())
         }
         QualityOfService::Level2 => {
             let pkid = pkid.unwrap();
@@ -260,7 +270,7 @@ async fn handle_publish(packet: &PublishPacket, state: Arc<State>) -> Option<Var
             }
             state.pending_packets.insert(pkid, packet.clone()).await;
 
-            Some(PubrecPacket::new(pkid).into())
+            Some(PubrecPacket::new(pkid, PubrecReasonCode::Success).into())
         }
     }
 }
@@ -275,7 +285,7 @@ fn handle_puback(pkid: u16, state: Arc<State>) {
 }
 
 fn handle_pubrec(pkid: u16) -> VariablePacket {
-    PubrelPacket::new(pkid).into()
+    PubrelPacket::new(pkid, PubrelReasonCode::Success).into()
 }
 
 async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
@@ -301,7 +311,7 @@ async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
         None => log::error!("packet id {} not found.", pkid),
     }
 
-    PubcompPacket::new(pkid).into()
+    PubcompPacket::new(pkid, PubcompReasonCode::Success).into()
 }
 
 fn handle_pubcomp(pkid: u16, state: Arc<State>) {
@@ -321,12 +331,17 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
     if let Some(Token::Subscribe(token)) = pkids.get_token(pkid) {
         let mut subscriptions = state.subscriptions.lock();
 
-        for (i, code) in packet.return_codes().iter().enumerate() {
+        token.set_suback_properties(packet.properties().clone());
+
+        for (i, code) in packet.reason_code().iter().enumerate() {
             token.set_result(i, *code);
 
             match token.get_subscription(i) {
                 Some(subscription) => {
-                    if *code != SubscribeReturnCode::Failure {
+                    if *code == SubscribeReasonCode::GrantedQos0
+                        || *code == SubscribeReasonCode::GrantedQos1
+                        || *code == SubscribeReasonCode::GrantedQos2
+                    {
                         state.topic_manager.add(subscription.clone());
                         subscriptions.insert(subscription.topic.to_owned(), subscription);
                     }
@@ -340,11 +355,13 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
     }
 }
 
-fn handle_unsuback(pkid: u16, state: Arc<State>) {
+fn handle_unsuback(pkid: u16, properties: UnsubackProperties, state: Arc<State>) {
     let mut pkids = state.packet_ids.lock();
 
     if let Some(Token::Unsubscribe(token)) = pkids.get_token(pkid) {
         let topics = token.topics();
+
+        token.set_unsuback_properties(properties);
 
         for topic in topics {
             state.topic_manager.remove(topic);

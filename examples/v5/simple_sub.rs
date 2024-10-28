@@ -1,9 +1,15 @@
 use std::{env, time::Duration};
 
-use mesquitte_client_v4::{
-    client::ClientV4, message::Message, options::ClientOptions, transport, Client,
+use mesquitte_client_v5::{
+    client::ClientV5, message::Message, options::ClientOptions, transport, Client,
 };
-use mqtt_codec_kit::common::QualityOfService;
+use mqtt_codec_kit::{
+    common::QualityOfService,
+    v5::{
+        control::SubscribeProperties,
+        packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
+    },
+};
 
 fn handler1(msg: &Message) {
     log::info!(
@@ -37,37 +43,44 @@ async fn main() {
     let mut options = ClientOptions::new();
     options
         .set_server("localhost:1883")
-        .set_client_id("tcp-sub-client-v4")
+        .set_client_id("tcp-sub-client-v5")
         .set_keep_alive(Duration::from_secs(10))
         .set_auto_reconnect(true)
         .set_connect_retry_interval(Duration::from_secs(10));
 
-    let mut cli = ClientV4::new(options, transport);
+    let mut cli = ClientV5::new(options, transport);
 
-    let token = cli.connect().await;
+    let token = cli.connect(ConnectProperties::default()).await;
     let err = token.await;
     if err.is_some() {
         panic!("{:#?}", err.unwrap());
     }
 
+    let properties = SubscribeProperties::default();
+
+    let qos0_options = SubscribeOptions::default();
     let token = cli
-        .subscribe("a/#", QualityOfService::Level0, handler1)
+        .subscribe("a/#", qos0_options, properties.clone(), handler1)
         .await;
     let err = token.await;
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
 
+    let mut qos1_options = SubscribeOptions::default();
+    qos1_options.set_qos(QualityOfService::Level1);
     let token = cli
-        .subscribe("a/b", QualityOfService::Level1, handler1)
+        .subscribe("a/b", qos1_options, properties.clone(), handler1)
         .await;
     let err = token.await;
     if err.is_some() {
         println!("{:#?}", err.unwrap());
     }
 
+    let mut qos2_options = SubscribeOptions::default();
+    qos2_options.set_qos(QualityOfService::Level2);
     let token = cli
-        .subscribe("b/#", QualityOfService::Level1, handler2)
+        .subscribe("b/#", qos2_options, properties, handler2)
         .await;
     let err = token.await;
     if err.is_some() {

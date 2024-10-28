@@ -1,6 +1,12 @@
 use std::future::Future;
 
-use mqtt_codec_kit::common::QualityOfService;
+use mqtt_codec_kit::{
+    common::QualityOfService,
+    v5::{
+        control::{PublishProperties, SubscribeProperties},
+        packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
+    },
+};
 
 use topic_store::OnMessageArrivedHandler;
 
@@ -16,7 +22,10 @@ mod topic_trie;
 pub mod transport;
 
 pub trait Client {
-    fn connect(&mut self) -> impl Future<Output = token::ConnectToken> + Send;
+    fn connect(
+        &mut self,
+        properties: ConnectProperties,
+    ) -> impl Future<Output = token::ConnectToken> + Send;
 
     fn disconnect(&mut self) -> impl Future<Output = token::DisconnectToken> + Send;
 
@@ -26,6 +35,7 @@ pub trait Client {
         qos: QualityOfService,
         retained: bool,
         payload: V,
+        properties: PublishProperties,
     ) -> impl Future<Output = token::PublishToken> + Send
     where
         S: Into<String> + Send,
@@ -34,13 +44,14 @@ pub trait Client {
     fn subscribe<S: Into<String> + Send>(
         &mut self,
         topic: S,
-        qos: QualityOfService,
+        options: SubscribeOptions,
+        properties: SubscribeProperties,
         callback: OnMessageArrivedHandler,
     ) -> impl Future<Output = token::SubscribeToken> + Send;
 
     fn subscribe_multiple<S: Into<String> + Clone + Send>(
         &mut self,
-        topics: Vec<(S, QualityOfService)>,
+        subscriptions: Vec<(S, SubscribeOptions, SubscribeProperties)>,
         callback: OnMessageArrivedHandler,
     ) -> impl Future<Output = token::SubscribeToken> + Send;
 
