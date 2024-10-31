@@ -1,6 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use std::{
     io,
+    ops::Deref,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -38,6 +39,7 @@ pub async fn read_from_server<R, D>(
     D: Decoder<Item = VariablePacket, Error = VariablePacketError>,
 {
     log::info!("start read loop.");
+    let state = state.deref();
     loop {
         match reader.next().await {
             Some(Ok(packet)) => {
@@ -45,31 +47,31 @@ pub async fn read_from_server<R, D>(
 
                 let resp = match packet {
                     VariablePacket::PublishPacket(packet) => {
-                        match handle_publish(&packet, state.clone()).await {
+                        match handle_publish(&packet, state).await {
                             Some(resp) => resp,
                             None => continue,
                         }
                     }
                     VariablePacket::PubackPacket(packet) => {
-                        handle_puback(packet.packet_identifier(), state.clone());
+                        handle_puback(packet.packet_identifier(), state);
                         continue;
                     }
                     VariablePacket::PubrecPacket(packet) => {
                         handle_pubrec(packet.packet_identifier())
                     }
                     VariablePacket::PubrelPacket(packet) => {
-                        handle_pubrel(packet.packet_identifier(), state.clone()).await
+                        handle_pubrel(packet.packet_identifier(), state).await
                     }
                     VariablePacket::PubcompPacket(packet) => {
-                        handle_pubcomp(packet.packet_identifier(), state.clone());
+                        handle_pubcomp(packet.packet_identifier(), state);
                         continue;
                     }
                     VariablePacket::SubackPacket(packet) => {
-                        handle_suback(&packet, state.clone());
+                        handle_suback(&packet, state);
                         continue;
                     }
                     VariablePacket::UnsubackPacket(packet) => {
-                        handle_unsuback(packet.packet_identifier(), state.clone());
+                        handle_unsuback(packet.packet_identifier(), state);
                         continue;
                     }
                     VariablePacket::DisconnectPacket(_packet) => {
@@ -216,10 +218,10 @@ pub async fn keep_alive(duration: Duration, state: Arc<State>, exit: Arc<AtomicB
     log::info!("keep_alive loop exited.");
 }
 
-async fn handle_publish(packet: &PublishPacket, state: Arc<State>) -> Option<VariablePacket> {
+async fn handle_publish(packet: &PublishPacket, state: &State) -> Option<VariablePacket> {
     let (qos, pkid) = packet.qos().split();
 
-    let subscriptions = &state
+    let subscriptions = state
         .topic_manager
         .match_topic(packet.topic_name().to_string());
 
@@ -265,7 +267,7 @@ async fn handle_publish(packet: &PublishPacket, state: Arc<State>) -> Option<Var
     }
 }
 
-fn handle_puback(pkid: u16, state: Arc<State>) {
+fn handle_puback(pkid: u16, state: &State) {
     let mut pkids = state.packet_ids.lock();
 
     if let Some(token) = pkids.get_token(pkid) {
@@ -278,12 +280,12 @@ fn handle_pubrec(pkid: u16) -> VariablePacket {
     PubrelPacket::new(pkid).into()
 }
 
-async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
+async fn handle_pubrel(pkid: u16, state: &State) -> VariablePacket {
     let packet = state.pending_packets.remove(&pkid).await;
 
     match packet {
         Some(packet) => {
-            let subscriptions = &state
+            let subscriptions = state
                 .topic_manager
                 .match_topic(packet.topic_name().to_string());
 
@@ -304,7 +306,7 @@ async fn handle_pubrel(pkid: u16, state: Arc<State>) -> VariablePacket {
     PubcompPacket::new(pkid).into()
 }
 
-fn handle_pubcomp(pkid: u16, state: Arc<State>) {
+fn handle_pubcomp(pkid: u16, state: &State) {
     let mut pkids = state.packet_ids.lock();
 
     if let Some(token) = pkids.get_token(pkid) {
@@ -313,7 +315,7 @@ fn handle_pubcomp(pkid: u16, state: Arc<State>) {
     }
 }
 
-fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
+fn handle_suback(packet: &SubackPacket, state: &State) {
     let mut pkids = state.packet_ids.lock();
 
     let pkid = packet.packet_identifier();
@@ -340,7 +342,7 @@ fn handle_suback(packet: &SubackPacket, state: Arc<State>) {
     }
 }
 
-fn handle_unsuback(pkid: u16, state: Arc<State>) {
+fn handle_unsuback(pkid: u16, state: &State) {
     let mut pkids = state.packet_ids.lock();
 
     if let Some(Token::Unsubscribe(token)) = pkids.get_token(pkid) {
