@@ -3,13 +3,7 @@ use std::{env, time::Duration};
 use mesquitte_client_v5::{
     client::ClientV5, message::Message, options::ClientOptions, transport, Client,
 };
-use mqtt_codec_kit::{
-    common::QualityOfService,
-    v5::{
-        control::{PublishProperties, SubscribeProperties},
-        packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
-    },
-};
+use mqtt_codec_kit::{common::QualityOfService, v5::packet::subscribe::SubscribeOptions};
 
 fn handler(msg: &Message) {
     log::info!(
@@ -39,17 +33,16 @@ async fn main() {
 
     let mut cli = ClientV5::new(options, transport);
 
-    let token = cli.connect(ConnectProperties::default()).await;
+    let token = cli.connect(None).await;
     let err = token.await;
     if err.is_some() {
         panic!("{:#?}", err.unwrap());
     }
 
     let subscribe_options = SubscribeOptions::default();
-    let properties = SubscribeProperties::default();
 
     let token = cli
-        .subscribe("test/topic", subscribe_options, properties, handler)
+        .subscribe("test/topic", subscribe_options, None, handler)
         .await;
     let err = token.await;
     if err.is_some() {
@@ -60,13 +53,7 @@ async fn main() {
     let payload = binding.as_slice();
 
     let token = cli
-        .publish(
-            "test/topic",
-            QualityOfService::Level0,
-            false,
-            payload,
-            PublishProperties::default(),
-        )
+        .publish("test/topic", QualityOfService::Level0, false, payload, None)
         .await;
     let err = token.await;
     if err.is_some() {

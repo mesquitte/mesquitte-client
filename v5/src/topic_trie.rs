@@ -210,7 +210,7 @@ impl TopicManager {
 
 #[cfg(test)]
 mod test {
-    use mqtt_codec_kit::v5::{control::SubscribeProperties, packet::subscribe::SubscribeOptions};
+    use mqtt_codec_kit::v5::packet::subscribe::SubscribeOptions;
 
     use crate::{message::Message, topic_store::Subscription};
 
@@ -232,23 +232,22 @@ mod test {
     fn test_topic_manager() {
         let manager = TopicManager::new();
         let options = SubscribeOptions::default();
-        let properties = SubscribeProperties::default();
         manager.add(Subscription {
             topic: "sport/football".to_owned(),
             options,
-            properties: properties.clone(),
+            properties: None,
             handler: handler1,
         });
         manager.add(Subscription {
             topic: "sport/+/news".to_owned(),
             options,
-            properties: properties.clone(),
+            properties: None,
             handler: handler2,
         });
         manager.add(Subscription {
             topic: "sport/#".to_owned(),
             options,
-            properties: properties.clone(),
+            properties: None,
             handler: handler3,
         });
         manager.remove("sport/#");

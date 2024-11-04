@@ -58,6 +58,7 @@ async fn main() {
         println!("{:#?}", err.unwrap());
     }
 
+    // conflict subscription with a/b
     let token = cli
         .subscribe("a/b", QualityOfService::Level1, handler1)
         .await;

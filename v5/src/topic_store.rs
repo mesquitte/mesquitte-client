@@ -9,7 +9,7 @@ pub type OnMessageArrivedHandler = fn(&Message);
 pub struct Subscription {
     pub topic: String,
     pub options: SubscribeOptions,
-    pub properties: SubscribeProperties,
+    pub properties: Option<SubscribeProperties>,
     pub handler: OnMessageArrivedHandler,
 }
 
@@ -17,7 +17,7 @@ impl Subscription {
     pub fn new<S: Into<String>>(
         topic: S,
         options: SubscribeOptions,
-        properties: SubscribeProperties,
+        properties: Option<SubscribeProperties>,
         handler: OnMessageArrivedHandler,
     ) -> Self {
         Self {

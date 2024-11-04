@@ -14,7 +14,8 @@ use mqtt_codec_kit::{
     common::{qos::QoSWithPacketIdentifier, QualityOfService, TopicFilter, TopicName},
     v5::{
         control::{
-            ConnectReasonCode, DisconnectReasonCode, PublishProperties, SubscribeProperties,
+            ConnectReasonCode, DisconnectProperties, DisconnectReasonCode, PublishProperties,
+            SubscribeProperties,
         },
         packet::{
             connect::{ConnectProperties, LastWill},
@@ -51,7 +52,7 @@ pub struct ClientV5<T> {
     connect_status: Arc<Mutex<ConnectStatus>>,
     notify: Arc<Notify>,
     transport: T,
-    connect_properties: ConnectProperties,
+    connect_properties: Option<ConnectProperties>,
 
     manual_disconnect: Arc<AtomicBool>,
 }
@@ -86,7 +87,7 @@ impl<T: Transport + Send> ClientV5<T> {
         *status == ConnectStatus::Connected
     }
 
-    fn build_connect_packet(&self, properties: ConnectProperties) -> ConnectPacket {
+    fn build_connect_packet(&self, properties: Option<ConnectProperties>) -> ConnectPacket {
         let id = if self.options.client_id().is_some() {
             self.options.client_id().clone().unwrap()
         } else {
@@ -119,7 +120,9 @@ impl<T: Transport + Send> ClientV5<T> {
             connect.set_password(Some(self.options.password().into()));
         }
 
-        connect.set_properties(properties);
+        if let Some(properties) = properties {
+            connect.set_properties(properties);
+        }
 
         connect
     }
@@ -200,7 +203,7 @@ impl<T: Transport + Send> ClientV5<T> {
 }
 
 impl<T: Transport + Send> Client for ClientV5<T> {
-    async fn connect(&mut self, properties: ConnectProperties) -> ConnectToken {
+    async fn connect(&mut self, properties: Option<ConnectProperties>) -> ConnectToken {
         let mut token = ConnectToken::default();
 
         match self.connect_status() {
@@ -352,7 +355,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
         token
     }
 
-    async fn disconnect(&mut self) -> DisconnectToken {
+    async fn disconnect(&mut self, properties: Option<DisconnectProperties>) -> DisconnectToken {
         let mut token = DisconnectToken::default();
 
         log::debug!("start disconnect.");
@@ -362,7 +365,10 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             return token;
         }
 
-        let packet = DisconnectPacket::new(DisconnectReasonCode::NormalDisconnection).into();
+        let mut packet = DisconnectPacket::new(DisconnectReasonCode::NormalDisconnection);
+        if let Some(properties) = properties {
+            packet.set_properties(properties);
+        }
 
         self.manual_disconnect.store(true, Ordering::SeqCst);
 
@@ -373,7 +379,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             .clone()
             .unwrap()
             .send(PacketAndToken::new_with(
-                packet,
+                packet.into(),
                 Token::Disconnect(token.clone()),
             ))
             .await
@@ -391,7 +397,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
         qos: QualityOfService,
         retained: bool,
         payload: V,
-        properties: PublishProperties,
+        properties: Option<PublishProperties>,
     ) -> PublishToken
     where
         S: Into<String> + Send,
@@ -445,9 +451,10 @@ impl<T: Transport + Send> Client for ClientV5<T> {
 
         let mut packet = PublishPacket::new(topic_name, qos, payload);
         packet.set_retain(retained);
-        packet.set_properties(properties);
 
-        let packet = packet.into();
+        if let Some(properties) = properties {
+            packet.set_properties(properties);
+        }
 
         log::debug!("send publish packet.");
         if self
@@ -456,7 +463,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             .clone()
             .unwrap()
             .send(PacketAndToken::new_with(
-                packet,
+                packet.into(),
                 Token::Publish(token.clone()),
             ))
             .await
@@ -472,7 +479,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
         &mut self,
         topic: S,
         options: SubscribeOptions,
-        properties: SubscribeProperties,
+        properties: Option<SubscribeProperties>,
         callback: OnMessageArrivedHandler,
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
@@ -523,9 +530,9 @@ impl<T: Transport + Send> Client for ClientV5<T> {
 
         let mut packet = SubscribePacket::new(pkid, subscribes);
 
-        packet.set_properties(properties.clone());
-
-        let packet = packet.into();
+        if let Some(properties) = properties.clone() {
+            packet.set_properties(properties);
+        }
 
         log::debug!("send subscribe packet.");
         if self
@@ -534,7 +541,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             .clone()
             .unwrap()
             .send(PacketAndToken::new_with(
-                packet,
+                packet.into(),
                 Token::Subscribe(token.clone()),
             ))
             .await
@@ -553,7 +560,8 @@ impl<T: Transport + Send> Client for ClientV5<T> {
 
     async fn subscribe_multiple<S: Into<String> + Clone + Send>(
         &mut self,
-        topics: Vec<(S, SubscribeOptions, SubscribeProperties)>,
+        topics: Vec<(S, SubscribeOptions)>,
+        properties: Option<SubscribeProperties>,
         callback: OnMessageArrivedHandler,
     ) -> SubscribeToken {
         let mut token = SubscribeToken::default();
@@ -579,7 +587,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
         let mut subscribes = vec![];
         let mut subscriptions = vec![];
 
-        for (topic, options, properties) in topics {
+        for (topic, options) in topics {
             let topic: String = topic.into();
 
             let topic_filter = match TopicFilter::new(topic.to_owned()) {
@@ -591,10 +599,18 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             };
 
             subscribes.push((topic_filter, options));
-            subscriptions.push(Subscription::new(topic, options, properties, callback));
+            subscriptions.push(Subscription::new(
+                topic,
+                options,
+                properties.clone(),
+                callback,
+            ));
         }
 
-        let packet = SubscribePacket::new(pkid, subscribes).into();
+        let mut packet = SubscribePacket::new(pkid, subscribes);
+        if let Some(properties) = properties {
+            packet.set_properties(properties);
+        }
 
         log::debug!("send subscribe packet.");
         if self
@@ -603,7 +619,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
             .clone()
             .unwrap()
             .send(PacketAndToken::new_with(
-                packet,
+                packet.into(),
                 Token::Subscribe(token.clone()),
             ))
             .await
@@ -680,13 +696,7 @@ impl<T: Transport + Send> Client for ClientV5<T> {
 mod test {
     use std::env;
 
-    use mqtt_codec_kit::{
-        common::QualityOfService,
-        v5::{
-            control::{PublishProperties, SubscribeProperties},
-            packet::{connect::ConnectProperties, subscribe::SubscribeOptions},
-        },
-    };
+    use mqtt_codec_kit::{common::QualityOfService, v5::packet::subscribe::SubscribeOptions};
 
     use crate::{client::Client, message::Message, transport};
 
@@ -719,7 +729,7 @@ mod test {
 
         let mut cli = ClientV5::new(options, transport);
 
-        let token = cli.connect(ConnectProperties::default()).await;
+        let token = cli.connect(None).await;
 
         let err = token.await;
         if err.is_some() {
@@ -730,10 +740,9 @@ mod test {
         let payload = binding.as_slice();
 
         let options = SubscribeOptions::default();
-        let properties = SubscribeProperties::default();
 
         let token = cli
-            .subscribe("sport/football", options, properties.clone(), handler)
+            .subscribe("sport/football", options, None, handler)
             .await;
         let err = token.await;
         if err.is_some() {
@@ -741,7 +750,7 @@ mod test {
         }
 
         let token = cli
-            .subscribe("sport/basketball", options, properties, handler)
+            .subscribe("sport/basketball", options, None, handler)
             .await;
         let err = token.await;
         if err.is_some() {
@@ -754,7 +763,7 @@ mod test {
                 QualityOfService::Level2,
                 false,
                 payload,
-                PublishProperties::default(),
+                None,
             )
             .await;
         let err = token.await;

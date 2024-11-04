@@ -1,8 +1,5 @@
 use mesquitte_client_v5::{client::ClientV5, options::ClientOptions, transport, Client};
-use mqtt_codec_kit::{
-    common::QualityOfService,
-    v5::{control::PublishProperties, packet::connect::ConnectProperties},
-};
+use mqtt_codec_kit::common::QualityOfService;
 
 #[tokio::main]
 async fn main() {
@@ -16,7 +13,7 @@ async fn main() {
 
     let mut cli = ClientV5::new(options, transport);
 
-    let token = cli.connect(ConnectProperties::default()).await;
+    let token = cli.connect(None).await;
     let err = token.await;
     if err.is_some() {
         panic!("{:#?}", err.unwrap());
@@ -26,13 +23,7 @@ async fn main() {
     let payload = binding.as_slice();
 
     let token = cli
-        .publish(
-            "a/topic",
-            QualityOfService::Level0,
-            false,
-            payload,
-            PublishProperties::default(),
-        )
+        .publish("a/b", QualityOfService::Level0, false, payload, None)
         .await;
     let err = token.await;
     if err.is_some() {
